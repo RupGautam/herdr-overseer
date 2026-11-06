@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """handoff-guard.py: (1) release workers done/idle 30+ min (OVERSEER_SWEEP_IDLE_MIN); (2) ask an idle coordinator to write a detailed handoff while its prompt cache is still warm.
 
-Claude Code on a subscription keeps the main conversation's prompt cache for 1 hour. A coordinator that
-sits idle longer loses it, and the next turn re-reads the whole context at full price. Shortly before that,
+Agents with prompt caching (e.g. Claude Code on a subscription: 1 hour) lose the cache when the coordinator
+sits idle longer, and the next turn re-reads the whole context at full price. Shortly before that,
 this guard sends the coordinator one prompt asking it to write a handoff (SKILL.md "Handoff"). The next
 session in that project loads the newest handoff through the SessionStart hook (scripts/load-handoff.py).
 
-A coordinator is an hc terminal labelled overseer.role=coordinator, or one whose Herdr tab is named
-"coordinator". It is asked at most once per idle stretch: no new request until it has done real work again.
+A coordinator is a live hc terminal whose agent is in COORDINATOR_AGENTS (config/overseer.env) and that is
+labelled overseer.role=coordinator or sits in a Herdr tab named "coordinator". It is asked at most once per idle stretch: no new request until it has done real work again.
 
   handoff-guard.py                 # loop forever (run via start-guard.sh as hc terminal "handoff-guard")
   handoff-guard.py --once          # one pass, then exit (testing)
@@ -22,7 +22,7 @@ import subprocess
 import sys
 import time
 
-SKILL = os.path.expanduser("~/.claude/skills/herdr-overseer")
+SKILL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATE_FILE = os.path.join(SKILL, "state", "handoff-guard.json")
 HANDOFF_ROOT = os.path.join(SKILL, "state", "handoffs")
 LOG = os.path.join(SKILL, "state", "observations.log")
@@ -31,6 +31,22 @@ DEFAULT_IDLE_MIN = 50.0
 POLL_SECONDS = 60
 SWEEP_IDLE_MIN = float(os.environ.get("OVERSEER_SWEEP_IDLE_MIN", 30))
 RELEASE = os.path.join(SKILL, "scripts", "release-workers.py")
+
+
+def config_value(key, default):
+    """A plain KEY=value / KEY="value" line from config/overseer.env (no shell evaluation)."""
+    path = os.environ.get("OVERSEER_CONFIG", os.path.join(SKILL, "config", "overseer.env"))
+    try:
+        for line in open(path):
+            m = re.match(r'\s*' + key + r'=(.*)$', line)
+            if m:
+                return m.group(1).split(" #")[0].strip().strip('"\'')
+    except FileNotFoundError:
+        pass
+    return default
+
+
+COORDINATOR_AGENTS = set(config_value("COORDINATOR_AGENTS", "claude-code").split())
 
 
 def hc(*args):
@@ -77,7 +93,7 @@ def project_slug(cwd):
 def coordinators():
     found = []
     for t in json.loads(hc("ls", "--json"))["terminals"]:
-        if t.get("state") != "live" or t.get("agent") != "claude-code":
+        if t.get("state") != "live" or t.get("agent") not in COORDINATOR_AGENTS:
             continue
         where = t.get("where") or ""
         try:

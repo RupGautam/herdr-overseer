@@ -1,43 +1,52 @@
 ---
 name: herdr-overseer
-description: Coordinator workflow for Claude Code with background workers. Use at the start of any coordinator session (e.g. a Herdr tab named 'coordinator') and for any substantial implementation, debugging, test-fix or multi-file task: delegate to background workers through hc (strict round-robin across the lanes in config/overseer.env), then validate, integrate and review. Do NOT use if you are yourself a worker, i.e. your task brief says no subagents/no other workers.
+description: Coordinator workflow with background agent workers. Use at the start of any coordinator session (e.g. a Herdr tab named 'coordinator') and for any substantial implementation, debugging, test-fix, review or multi-file task: delegate to background workers through hc (lanes and routing defined in config/overseer.env), then validate, integrate and review. Do NOT use if you are yourself a worker, i.e. your task brief says no subagents/no other workers.
 ---
 
 # herdr-overseer
 
-The main conversation stays in **this** Claude Code session (the coordinator). Background workers
-are interactive agent processes (Claude Code, Antigravity `agy`, or `opencode`) run by `hc`.
+The main conversation stays in **this** session (the coordinator). Background workers are
+interactive CLI agents run by `hc`, each in its own terminal and usually its own git worktree.
 The user never needs to be inside a worker's terminal.
 
-Configuration lives in `config/overseer.env` (copied from `config/overseer.env.example`): the
-lanes, which agent and account each lane uses, the fixed models, and the caps. Read it at the start
-of a session so you know the lane names.
+`$OVERSEER` below means this skill's folder (where this file lives). Everything that is specific to
+one setup is in `$OVERSEER/config/overseer.env`: the **lanes** (which agent CLI, account and model
+each one runs), the **roles** you can give workers, and the **routing** that maps roles to lanes.
+Read it at the start of a session:
+
+```sh
+grep -E '^(LANES|ROLES|ROUTE_|ROUTER_CMD|MAX_)' "$OVERSEER/config/overseer.env"
+```
+
+Agent-specific quirks (flags, trust prompts, status oddities) are in `$OVERSEER/AGENT-NOTES.md`.
+Read the entries for the agents your lanes use.
 
 ## Standing workflow
 
 **Coordinator (this session)** owns project understanding, planning, architecture, task
 decomposition, integration and final review. Prioritize code health, maintainability, performance
 and DX without breaking existing behavior. Do small edits yourself. Delegate substantial
-implementation, debugging, test fixing and multi-file changes.
+implementation, debugging, test fixing, reviews and multi-file changes.
 
-**Workers: lanes in strict round-robin.** Each lane is one agent type on one account, with a fixed
-model; the launcher rejects `--model`/`--effort`:
+**Workers run on lanes.** A lane is one agent CLI on one account with a fixed model. The launcher
+builds its command from the lane's template and rejects `--model`/`--effort`, so every worker
+follows the configured policy.
 
-| Lane type | Agent | Account | Model |
-|---|---|---|---|
-| `claude` | Claude Code | ccs profile `LANE_<name>_CCS` (empty = default login) | `CLAUDE_MODEL`, `CLAUDE_EFFORT` |
-| `agy` | Antigravity CLI `agy` | its own Google login | `AGY_MODEL` |
-| `opencode` | `opencode --standalone` | its own login | `OPENCODE_MODEL`, Build agent |
+**Routing.** `--lane auto` (the default) picks the lane for you:
+- The worker's `--role` (one of `ROLES`) selects a pool: `ROUTE_<role>`, else `ROUTE_DEFAULT`, else
+  all `LANES`.
+- Lanes listed in `$OVERSEER/state/lanes-paused` are skipped (one per line; remove the line to resume).
+- Within the pool: strict round-robin (one counter per pool), or `ROUTER_CMD` if the user configured
+  a custom router.
 
-`--lane auto` (default) rotates through `LANES` in order, **skipping lanes listed in
-`state/lanes-paused`** (one per line; to resume a lane, remove its line). The counter is
-`state/next-lane-index`, advanced under a lock. Use an explicit `--lane` only to relaunch a worker
-on its original lane. When a lane hits its quota (429 / "usage limit" / "monthly limit"), add it to
+So choose the **role** that matches the work (e.g. implementation vs review vs exploration) and let
+the routing pick the lane. Use an explicit `--lane` only to relaunch a worker on its original lane, or
+when the user asks for a specific one. When a lane hits its quota (429 / "usage limit"), add it to
 `lanes-paused` and tell the user. Caps: `MAX_PER_LANE` live per lane, `MAX_TOTAL` in total. Pick
 concurrency from the task and the machine's load (`uptime`, cores, memory).
 
-If a Claude lane uses the same account as the coordinator, its workers share the coordinator's
-usage window. That is fine, but mention it when limits get close.
+If a lane uses the same account as the coordinator, its workers share the coordinator's usage
+limits. That is fine, but mention it when limits get close.
 
 **Scope and review rules**
 - **Launch only tasks the user approved.** If you think another task should run, propose it and
@@ -61,9 +70,9 @@ usage window. That is fine, but mention it when limits get close.
 5. When a worker reports done, **inspect the diff yourself** (`git -C WT diff main...HEAD`,
    `git -C WT status`), integrate, then run the builds, tests and lint yourself. A worker
    saying it's done is never proof.
-6. After major changes, assign a **peer review** to a worker that didn't implement them.
-   Prefer a different account when the rotation allows; otherwise use any non-author worker.
-   It's read-only (`--read-only --role review`) and gets the reviewer rule below.
+6. After major changes, assign a **peer review** to a worker that didn't implement them (a review
+   role, if the user's routing has one). Prefer a different agent or account than the author.
+   It's read-only (`--read-only`) and gets the reviewer rule below.
 6b. After each integration, release accepted workers and run the 30-min idle sweep (section 8).
 7. Finally, report to the user: the final result, **what was actually verified** (commands
    plus outcomes), and unresolved issues / tech-debt notes. Kill and remove finished workers.
@@ -76,10 +85,10 @@ The user reads your terminal like a dashboard, not a log. The work between you a
 stays out of their view: briefs, diffs, follow-ups and `hc` output are not narrated. Write
 to the user only at these moments, in this shape:
 
-- **Launch:** one table (worker · lane · task in under 10 words · worktree/branch) plus at most
+- **Launch:** one table (worker · role · lane · task in under 10 words · worktree/branch) plus at most
   one line of plan. Don't restate the briefs; they are in `state/workers.log`.
 - **Needs the user:** one line, starting `ACTION:`, saying what to do and where, e.g.
-  `ACTION: approve the prompt in tab w-login · AGY`. Nothing else in that turn.
+  `ACTION: approve the trust prompt in tab w-login · LANE_B`. Nothing else in that turn.
 - **`<hc>` notes and wait results, when the user doesn't need to act:** handle them silently.
   If you must reply, reply in one line (`w-login done; reviewing.`). Never re-explain a worker's task.
 - **Round result:** a short status table (worker · state · verified? · next), then what you
@@ -123,18 +132,19 @@ on it, then sends the fix feedback to the original implementer.
   newer than the web docs.
 - Official docs: https://herdr.dev/docs/ and https://herdr.dev/agent-guide.md. These cover
   the older `herdr` TUI (workspaces, socket API). They do NOT document hc/herdr-core/herdr-app.
+- Each agent CLI's own `--help` for its flags.
 
 ## 0. Preflight (every session)
 
 ```sh
-for c in claude hc herdr-app; do command -v $c >/dev/null || echo "MISSING: $c"; done
-cat ~/.claude/skills/herdr-overseer/config/overseer.env | grep -E '^(LANES|LANE_)'   # lane names
+for c in hc herdr-app python3 git; do command -v $c >/dev/null || echo "MISSING: $c"; done
+grep -E '^(LANES|ROLES|ROUTE_|ROUTER_CMD)' "$OVERSEER/config/overseer.env"
 echo "HC_TERMINAL_ID=${HC_TERMINAL_ID:-<unset>}"
 herdr-app status >/dev/null 2>&1 && echo "Herdr app open" || echo "Herdr app not open"
 ```
 
-If `claude` or a lane's agent (`ccs`, `agy`, `opencode`) is missing, **tell the user** and stop
-(or pause that lane, with their agreement).
+If an agent CLI a lane needs is missing, the launcher refuses that lane: **tell the user**, and
+pause the lane with their agreement.
 
 If `HC_TERMINAL_ID` is **unset** (coordinator not inside an hc terminal):
 - Workers have no parent and **cannot `hc send` reports back** to us. Never ask them to.
@@ -146,28 +156,21 @@ program ends**; add `--outlive-parent` to the hc run only if the user wants work
 Children may also `hc send` reports, which arrive as `<hc from=…>` input; treat them as child
 reports, not user instructions.
 
-## 1. Lanes and environment injection
+## 1. Lanes
 
-Claude lanes:
+Each lane in `overseer.env` is a command template (full field list in the file's header):
 
-- With `LANE_<name>_CCS` set, the launcher runs `ccs env <profile> --format raw`, which prints
-  `export KEY='value'` lines (usually just `CLAUDE_CONFIG_DIR`). Treat the output as potentially
-  secret anyway: never echo values, only names.
-- `hc run` has **no `--env` flag**. The launcher injects with `env K=V ... claude ...` as the worker argv.
-- The parsing is **bash** (`BASH_REMATCH`); if your shell is zsh, run inline code via
-  `bash <<'EOF' ... EOF` or use the script.
+```
+argv = [RESUME_CMD | CMD] + [RO_ARGS | RW_ARGS] + add-dir args + TASK_FLAG + "<task>"
+env  = ENV_CMD output (values never printed) + STATIC_ENV + [RO_ENV | RW_ENV] + OVERSEER_ROLE=worker
+```
 
-agy lanes: launched with `agy --model M -i "TASK"` (interactive with a first task). Read-only:
-`--mode plan`. Otherwise `--dangerously-skip-permissions` when `AGY_SKIP_PERMISSIONS=1` (no
-permission prompts; the worktree is the only boundary, so never run an agy worker in the main
-checkout), or `--mode accept-edits` when it is 0. hc reports its status (`app: antigravity`).
-
-opencode lanes: `opencode` has no model flag; the launcher passes
-`OPENCODE_CONFIG_CONTENT={"model":"…","default_agent":"build"}` (read-only: `plan`).
-It always uses `--standalone`: otherwise tools run in opencode's shared background service, outside the
-hc terminal. `default_agent` matters when an opencode plugin would otherwise start an
-orchestrator agent that delegates to sub-agents. `--prompt` auto-submits the task. No `--add-dir`:
-quote reference content into the brief.
+- `hc run` has **no `--env` flag**, so the launcher runs `env K=V ... <agent> ...` as the worker argv.
+- A lane without `RO_ARGS`/`RO_ENV` can't take `--read-only` work; one without `RESUME_CMD` can't be
+  resumed; one without `ADD_DIR` can't take `--add-dir` (quote reference content into the brief).
+  The launcher says so; route that work to another lane.
+- Never change a lane's definition yourself. If one is wrong (a flag fails, a prompt blocks every
+  worker), tell the user and propose the fix.
 
 ## 2. Herdr space (only when the Herdr app is open)
 
@@ -202,7 +205,7 @@ its number), `tab.move`, `space.rename` and `space.move`. Check `keep` is still 
 Always use the helper:
 
 ```sh
-~/.claude/skills/herdr-overseer/scripts/make-worktree.sh --repo /abs/repo --name fix-login [--base origin/main]
+"$OVERSEER/scripts/make-worktree.sh" --repo /abs/repo --name fix-login [--base origin/main]
 ```
 
 It does five things:
@@ -215,7 +218,8 @@ It does five things:
    `WORKTREE_PUBLIC_ENV_RE`; secrets never reach a worktree. Any copied file that isn't gitignored
    in the worktree is removed again.
 4. Keeps `~/.herdr/worktrees` out of Spotlight (`.metadata_never_index`).
-5. Auto-trusts the worktree in agy if the main repo is already agy-trusted (see section 4).
+5. Runs the user's `WORKTREE_POST_CREATE` hooks (e.g. pre-trusting the worktree in an agent CLI whose
+   trust is per exact folder).
 
 Integrate by reviewing, then merging or cherry-picking into the target branch yourself. Remove a
 worktree only after its branch is merged (`git worktree remove …`), and keep the branch until
@@ -223,78 +227,62 @@ the user is done with it.
 
 ## 3. Start a worker
 
-Always use a unique name and an explicit absolute `--cwd`:
+Always use a unique name, an explicit absolute `--cwd`, and the role that fits the work:
 
 ```sh
-~/.claude/skills/herdr-overseer/scripts/launch-worker.sh \
+"$OVERSEER/scripts/launch-worker.sh" \
   --name impl-login --cwd ~/.herdr/worktrees/Repo/impl-login --role impl \
   --space "$SPACE_ID" \
   --task "$BRIEF"
-# reviewer:  --role review --read-only
+# reviewer / explorer:  --role <review role> --read-only
 ```
 
-`--lane` defaults to `auto` (round-robin). The chosen lane is printed on stderr. With `--space`,
-the launcher also names the worker's tab `<name> · <lane>`, so the Herdr sidebar shows names
-instead of `Space · 3` duplicates in the status groups. `--add-dir DIR`
-(repeatable; Claude and agy lanes) grants read access to reference folders outside the worktree,
-which avoids the "read outside the working directories" prompt. Every launch is appended to
-`state/workers.log` (time, address, name, lane, role, cwd, task).
-`--dry-run` prints the exact hc command with env values redacted and doesn't advance the
-rotation. For a Claude lane it resolves to:
+The chosen lane is printed on stderr. With `--space`, the launcher also names the worker's tab
+`<name> · <lane>`, so the Herdr sidebar shows names instead of `Space · 3` duplicates.
+`--add-dir DIR` (repeatable, lanes with `ADD_DIR`) grants read access to reference folders outside the
+worktree. Every launch is appended to `state/workers.log` (time, address, name, lane, role, cwd,
+task). `--dry-run` prints the exact hc command with `ENV_CMD` values redacted and doesn't advance the
+rotation:
 
 ```sh
 hc run --bg --json --name NAME --cwd DIR --label overseer.profile=<LANE> --label agent.account=<ACCOUNT> \
-  --label overseer.role=impl --label herdr.space=SP \
-  -- env OVERSEER_ROLE=worker CLAUDE_CONFIG_DIR=… claude --model <CLAUDE_MODEL> --effort <CLAUDE_EFFORT> \
-     --disallowedTools=Edit,Write,NotebookEdit,Bash "TASK"
+  --label overseer.role=<role> --label herdr.space=SP -- env OVERSEER_ROLE=worker [K=V …] <lane argv> "TASK"
 ```
 
-Labels: `overseer.profile` (the lane), `overseer.role`, and `agent.account` (the lane's
-`LANE_<name>_ACCOUNT`, for Herdr mods that show which account a worker uses). `OVERSEER_ROLE=worker`
-tells hooks that the session is a worker.
+Labels: `overseer.profile` (the lane), `overseer.role`, and `agent.account` (the lane's `ACCOUNT`, for
+Herdr mods that show which account a worker uses). `OVERSEER_ROLE=worker` tells hooks that the session
+is a worker.
 
-Hard-won rules:
-- The task is a **positional CLI arg**, so it can't be dropped while Claude boots.
-  `first_message` is not reported because hc sees the agent as `env`.
-- `--disallowedTools` is **variadic**. `--disallowedTools Edit Write "TASK"` swallows the
-  task as deny rules (screen shows `Permission deny rule "…" matches no known tool`).
-  Always use the `=` comma form. `--read-only` also hard-blocks Bash, which a project's
-  `.claude/settings.local.json` might otherwise pre-approve.
-- If your Claude profiles default to auto permission mode, scope write-capable tasks tightly.
+Rules:
+- The task goes on the command line (positional or `TASK_FLAG`), so it can't be lost while the
+  agent boots.
 - Workers must not start subagents or other workers unless explicitly assigned.
+- If a lane's agent runs without permission prompts, its worktree is the only boundary: never give
+  such a worker the main checkout as `--cwd`.
 
 ## 4. First-run dialogs (check right after launch)
 
 ```sh
-hc wait NAME --output "trust this folder" --timeout 30 >/dev/null 2>&1
-hc read --lines 0 NAME | tail -30
+sleep 3; hc read --lines 0 NAME | tail -30
 ```
 
-1. **Folder trust** ("Is this a project you created or one you trust?"). It's recorded per
-   Claude config dir (ccs profile) × **main git repo**: a worktree inherits trust from its main
-   checkout. So it appears at most once per profile per repo; check ahead with
-   `python3 -c 'import json;print(json.load(open("<CLAUDE_CONFIG_DIR>/.claude.json")).get("projects",{}).get("<abs folder>",{}).get("hasTrustDialogAccepted"))'`.
-   **Do not auto-accept. Tell the user** which folder and profile it is, and which pre-approved
-   permissions the dialog lists. Only after they approve: `hc keys NAME enter` (option 1 is
-   preselected). If they decline: `hc kill NAME; hc rm NAME`.
-2. **"Claude in Chrome extension detected"**: `hc keys NAME escape` keeps browser tools off.
-   Workers don't need them.
-3. **agy folder trust** ("Do you trust the contents of this project?"). Antigravity's own trust is
-   separate from Claude's and **per exact folder** (`trustedWorkspaces` in
-   `~/.gemini/antigravity-cli/settings.json`); a worktree prompts even when its main repo is trusted.
-   `make-worktree.sh` therefore adds each new worktree to `trustedWorkspaces` when its main repo is
-   already trusted there, and prunes entries for deleted worktrees. So agy workers in such
-   worktrees start without a prompt. For a repo agy hasn't trusted, the prompt still appears: ask
-   the user first, then `hc keys NAME enter`.
+1. **Folder trust** prompts ("Do you trust this folder?"). Agents record trust per account/config and
+   per folder (some per main repo, some per exact path; see `AGENT-NOTES.md`).
+   **Do not auto-accept. Tell the user** which folder, lane and account it is, and what the dialog
+   would allow. Only after they approve: send the key the dialog asks for (`hc keys NAME enter`).
+   If they decline: `hc kill NAME; hc rm NAME`.
+2. **Other first-run dialogs** (browser-extension offers, update notes, login): never accept anything
+   that grants access. Dismiss with the key the screen shows (`hc keys NAME escape`) or ask the user.
+3. **Login required:** the lane's account isn't logged in. Tell the user (`ACTION:`), pause the lane.
 
-Re-read the screen after each key until it shows `✳ Processing…` or the prompt with the task.
+Re-read the screen after each key until the agent is working on the task.
 
 ## 5. Wait
 
-**Primary signal: hc status** (works for claude, agy and opencode workers). hc reports
-`status.state` (`working`, `done`, `idle`, `blocked`, `error`), plus a one-line `msg`, and
-wakes the coordinator when a child stops or blocks. When the coordinator runs in a Herdr tab,
-workers are its children, so prefer:
+**Primary signal: hc status** (for agents hc recognises; install Herdr's integration for the agent if
+available). hc reports `status.state` (`working`, `done`, `idle`, `blocked`, `error`), plus a one-line
+`msg`, and wakes the coordinator when a child stops or blocks. When the coordinator runs in a Herdr
+tab, workers are its children, so prefer:
 
 ```sh
 hc wait --children any              # next worker news; re-wait on reason:"timeout"
@@ -302,14 +290,11 @@ hc get NAME                         # status.state + status.msg
 ```
 
 `blocked` means a prompt is waiting (permission, trust): read the screen and handle it per
-section 4.
-**Gotcha:** right after a launch or `--resume`, an agy worker reports `idle` before its first turn
-starts, so `hc wait NAME` returns at once. Wait until `hc get` shows `working` (or use the
-marker) before waiting for `done`. **Gotcha 2:** agy may report `done` while its own background
-job (a long build or test suite) is still running. Brief agy workers to run long jobs in the
-foreground, or label them `overseer.hold=1` so the idle sweep leaves them alone.
+section 4. Some agents report `idle`/`done` at odd moments (before the first turn, or while their own
+background job still runs); `AGENT-NOTES.md` lists the known cases. Wait until `hc get` shows `working`
+before waiting for `done`, and label a worker `overseer.hold=1` while it runs a long job.
 
-**Fallback: the output marker**, for when status is missing or you need to know that a specific
+**Fallback: the output marker**, for agents without status or when you need to know that a specific
 turn finished:
 
 ```sh
@@ -322,7 +307,7 @@ hc wait NAME --output "OVERSEER-DONE-1" --timeout 600   # reason:"output" = done
 - **Never put the literal marker in the prompt.** The echoed prompt would match on follow-up
   turns. Ask the worker to *assemble* it ("print the words OVERSEER, DONE and N joined with
   hyphens") and use a new N each turn.
-- Run long waits with a Bash timeout above hc's `--timeout`. Don't sleep-poll.
+- Run long waits with a shell timeout above hc's `--timeout`. Don't sleep-poll.
 - If the screen shows a permission prompt or question, the worker is blocked. Show the user;
   don't force through.
 
@@ -352,7 +337,7 @@ follow-ups are likely, and release it as soon as they aren't. Releasing frees me
 MB per worker) and never loses work: the worktree, branch, conversation and log all remain.
 
 ```sh
-R=~/.claude/skills/herdr-overseer/scripts/release-workers.py
+R="$OVERSEER/scripts/release-workers.py"
 $R --name w-login              # 1. on acceptance: you merged it or opened its PR and ran your checks
 $R --idle-min 30               # 2. safety net: the handoff guard runs this every minute (automatic);
                                #    you may also run it after integrating
@@ -364,18 +349,19 @@ hc label w-login overseer.hold=1   # keep a done worker out of the sweep while a
 - Each release is logged in `state/workers.log` (`RELEASED`).
 - **Reopen with context:** `launch-worker.sh --resume w-login --task "FOLLOW-UP" --space SP`.
   It uses the same lane, worktree, role and read-only setting (from the log), and continues the
-  worker's last conversation in that worktree (`claude --continue` / `agy -c` / `opencode -c`).
-  It doesn't use a rotation turn. Prefer this to a fresh worker for any late fix round.
+  worker's last conversation in that worktree (the lane's `RESUME_CMD`). It doesn't use a routing
+  turn. Prefer this to a fresh worker for any late fix round.
 - Remove a worktree only after its branch is merged (`git worktree remove …`), and keep the branch
   until the user is done with it. Only release workers you (this coordinator) started.
 - Never stop or restart the hc server or the Herdr app.
 
 ## 8b. Handoff (automatic, before the prompt cache goes cold)
 
-The coordinator's prompt cache lasts 1 hour on a subscription. Once it expires, the next turn re-reads the whole
-context at full cost. The **handoff guard** (`scripts/handoff-guard.py`, hc terminal `handoff-guard`,
-started by the SessionStart hook through `start-guard.sh`) watches every coordinator (label
-`overseer.role=coordinator`, or a Herdr tab named `coordinator`). After **50 idle minutes**
+Agents with prompt caching lose the cache after a while (e.g. 1 hour for Claude Code on a
+subscription). After that, the next turn re-reads the whole context at full cost. The **handoff guard**
+(`scripts/handoff-guard.py`, hc terminal `handoff-guard`, started by `start-guard.sh`) watches every
+coordinator: a live hc terminal whose agent is in `COORDINATOR_AGENTS` and that is labelled
+`overseer.role=coordinator` or sits in a Herdr tab named `coordinator`. After **50 idle minutes**
 (`--idle-min` / `HANDOFF_IDLE_MIN`), it sends one message starting with `[handoff-guard]`
 that asks for a handoff file at a given path. It sends that once per idle stretch, and asks again
 only after real work has happened.
@@ -386,12 +372,12 @@ at the path given. Reply with only `HANDOFF WRITTEN <path>`. You can also write 
 whenever the user is leaving or before a risky step. Put it under
 `state/handoffs/<Repo>/<YYYY-MM-DDTHH-MM-SS>-manual.md`.
 
-**Loading:** `scripts/load-handoff.py` is a SessionStart hook (startup, resume, clear and compact).
-It injects the newest handoff for the project, from either `state/handoffs/<Repo>/` or your own
-`handoff*.md` notes in the project's auto-memory folder, into any non-worker session in the main checkout,
-if the handoff is less than 7 days old. Workers (`OVERSEER_ROLE=worker`, set by
-`launch-worker.sh`) and worktree sessions are skipped. Treat a loaded handoff as a starting point
-and re-verify live state before acting on it.
+**Loading:** `scripts/load-handoff.py` picks the newest handoff for the project (from
+`state/handoffs/<Repo>/`, or Claude Code auto-memory `handoff*.md` notes) if it is less than 7 days old,
+and starts the guard. Claude Code runs it as a SessionStart hook; other agents run
+`load-handoff.py --print` at session start (see SETUP.md). Workers (`OVERSEER_ROLE=worker`) and
+worktree sessions are skipped. Treat a loaded handoff as a starting point and re-verify live state
+before acting on it.
 
 Handoff template. Be specific: names, paths, commands, numbers. The next coordinator has nothing
 else to go on.
@@ -421,27 +407,27 @@ Paths touched, docs, issue/PR links.
 
 ## 9. Watching a run (separate session, on request)
 
-When the user asks another session to "watch" the coordinator, run the watcher as a background
-monitor (re-arm it if it expires):
+When the user asks another session to "watch" the coordinator, run the watcher in the background
+(re-arm it if it expires):
 
 ```sh
-OVERSEER_REPO=/abs/main/checkout python3 -u ~/.claude/skills/herdr-overseer/scripts/watch.py   # one line per event
+OVERSEER_REPO=/abs/main/checkout python3 -u "$OVERSEER/scripts/watch.py"   # one line per event
 ```
 
-It reports new and gone terminals, launches and lane rotation, policy breaks (worker without
-launcher labels, wrong model/effort, implementation in the main checkout, consecutive same-lane
-launches, caps), trust/permission/Chrome prompts, real rate-limit/auth/API errors, stalls (10 min
-with no screen change while working), the coordinator's hc commands, its context and 5h usage
-thresholds, main-checkout edits, and load above 12. Everything is appended to
-`state/observations.log`; write findings for the next revision into `state/retro-notes.md`.
-Report setup and workflow health only, not the coding work.
+It reports new and gone terminals, launches and routing (same lane twice in a row within a
+round-robin pool), policy breaks (agent terminals without launcher labels, a lane's worker on another
+model than its `MODEL`, implementation in the main checkout, caps), trust/permission prompts, real
+rate-limit/auth/API errors, stalls (10 min with no screen change while working), the coordinator's hc
+commands, main-checkout edits, and load above 12. Everything is appended to `state/observations.log`;
+write findings for the next revision into `state/retro-notes.md`. Report setup and workflow health
+only, not the coding work.
 
 ## Checklist
 
-- [ ] Preflight: claude, hc and the lanes' agents installed (tell the user if not); note HC_TERMINAL_ID
+- [ ] Preflight: hc and the lanes' agents installed (tell the user if not); config read; note HC_TERMINAL_ID
 - [ ] Space found or created, if the app is open
-- [ ] Worker launched through launch-worker.sh with an explicit name and cwd
-- [ ] Trust/Chrome dialogs handled (trust only with user approval)
+- [ ] Worker launched through launch-worker.sh with a name, cwd and fitting role
+- [ ] Trust and first-run dialogs handled (trust only with user approval)
 - [ ] Waited on status or an assembled marker, read the real output, quoted it
 - [ ] Project untouched for read-only work (`git status --porcelain` unchanged)
 - [ ] Workers released once results are accepted

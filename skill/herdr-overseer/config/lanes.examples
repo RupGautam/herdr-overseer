@@ -1,0 +1,61 @@
+# Example lane definitions. Nothing reads this file; copy blocks into overseer.env, rename the lane
+# (CLAUDE below -> your lane name, in every field) and add the name to LANES.
+#
+# Status of each example:
+#   "used in practice": run as real hc workers with this exact template (CLI version noted).
+#   "from --help": flags taken from the CLI's --help, never run as a worker. Verify with a probe
+#                  worker (SETUP.md step 5) before relying on it.
+# Always re-check flags with `<cli> --help` for your installed version. CLIs change quickly.
+
+# ---- Claude Code (used in practice, claude 2.1.x) ------------------------------------------------
+# The task is a positional arg. --disallowedTools is variadic, so it MUST use the `=` form or it
+# swallows the task. Read-only also blocks Bash, which a project's settings may pre-approve.
+LANE_CLAUDE_CMD=(claude --model claude-sonnet-5-5 --effort high)
+LANE_CLAUDE_RESUME_CMD=(claude --model claude-sonnet-5-5 --effort high --continue)
+LANE_CLAUDE_RO_ARGS=(--disallowedTools=Edit,Write,NotebookEdit,Bash)
+LANE_CLAUDE_ADD_DIR="--add-dir="
+LANE_CLAUDE_MODEL="claude-sonnet-5-5"
+LANE_CLAUDE_ACCOUNT="claude-main"
+# Second Claude account on the same machine via ccs (https://github.com/kaitranntt/ccs):
+#   LANE_CLAUDE2_ENV_CMD="ccs env work --format raw --shell bash"     # sets CLAUDE_CONFIG_DIR
+# Or without ccs, a separate config dir you logged in once with `CLAUDE_CONFIG_DIR=~/.claude-work claude`:
+#   LANE_CLAUDE2_STATIC_ENV=(CLAUDE_CONFIG_DIR=$HOME/.claude-work)
+
+# ---- Antigravity CLI `agy` (used in practice, agy 1.5.x) -----------------------------------------
+# -i = interactive with a first task. agy reports `idle` before its first turn starts: wait for
+# `working` first. RW: --dangerously-skip-permissions makes the worktree the only boundary; use
+# (--mode accept-edits) instead if you want prompts. `--mode auto` is not available on every account.
+LANE_AGY_CMD=(agy --model gemini-3.8-flash-high)
+LANE_AGY_RESUME_CMD=(agy --model gemini-3.8-flash-high -c)
+LANE_AGY_RO_ARGS=(--mode plan)
+LANE_AGY_RW_ARGS=(--dangerously-skip-permissions)
+LANE_AGY_TASK_FLAG=(-i)
+LANE_AGY_ADD_DIR="--add-dir"
+LANE_AGY_MODEL="gemini-3.8-flash-high"
+LANE_AGY_ACCOUNT="agy"
+
+# ---- opencode (used in practice, opencode 2.2.x) -------------------------------------------------
+# No model flag: model and agent go in OPENCODE_CONFIG_CONTENT. --standalone keeps tools inside the
+# hc terminal (not opencode's shared background service). default_agent avoids plugin orchestrator
+# agents that delegate to sub-agents. --prompt auto-submits. No --add-dir.
+LANE_OPENCODE_CMD=(opencode --standalone)
+LANE_OPENCODE_RESUME_CMD=(opencode --standalone -c)
+LANE_OPENCODE_RW_ENV=('OPENCODE_CONFIG_CONTENT={"model":"opencode-go/kimi-k3.1-pro","default_agent":"build"}')
+LANE_OPENCODE_RO_ENV=('OPENCODE_CONFIG_CONTENT={"model":"opencode-go/kimi-k3.1-pro","default_agent":"plan"}')
+LANE_OPENCODE_TASK_FLAG=(--prompt)
+LANE_OPENCODE_ACCOUNT="opencode"
+
+# ---- OpenAI Codex CLI (from --help, codex-cli 0.166) ---------------------------------------------
+# Resume is a subcommand. Check that `resume --last` picks the session of the current directory.
+# Uses the model from ~/.codex/config.toml; to pin one, add `-m <model>` to both commands and set MODEL.
+LANE_CODEX_CMD=(codex -a never)
+LANE_CODEX_RESUME_CMD=(codex resume --last -a never)
+LANE_CODEX_RO_ARGS=(-s read-only)
+LANE_CODEX_RW_ARGS=(-s workspace-write)
+LANE_CODEX_ADD_DIR="--add-dir"
+LANE_CODEX_ACCOUNT="codex"
+
+# ---- Any other CLI agent -------------------------------------------------------------------------
+# Requirements: it runs interactively in a terminal (so hc can show it and send follow-ups), starts
+# in the current directory, accepts a first task on the command line, and ideally can continue its
+# last session in that directory. Fill the template from its --help; SETUP.md explains each field.

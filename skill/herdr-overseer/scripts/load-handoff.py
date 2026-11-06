@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""load-handoff.py: SessionStart hook. Loads the newest coordinator handoff for this project into the session.
+"""load-handoff.py: loads the newest coordinator handoff for this project into a new coordinator session.
+
+  load-handoff.py                  Claude Code SessionStart hook: reads hook JSON on stdin, prints hook JSON
+  load-handoff.py --print [DIR]    any other agent: prints the handoff as plain text (nothing if none);
+                                   call it from the agent's own session-start hook or instructions
 
 Runs on startup, resume, clear and compact. Skips workers (OVERSEER_ROLE=worker, or a cwd under
 ~/.herdr/worktrees) and handoffs older than MAX_AGE_DAYS. It also makes sure the handoff guard is running
@@ -12,7 +16,7 @@ import subprocess
 import sys
 import time
 
-SKILL = os.path.expanduser("~/.claude/skills/herdr-overseer")
+SKILL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HANDOFF_ROOT = os.path.join(SKILL, "state", "handoffs")
 WORKTREE_ROOT = os.path.realpath(os.path.expanduser("~/.herdr/worktrees"))
 MAX_AGE_DAYS = 7
@@ -59,10 +63,14 @@ def start_guard():
 def main():
     if os.environ.get("OVERSEER_ROLE") == "worker":
         return
-    try:
-        hook = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
-        hook = {}
+    plain = len(sys.argv) > 1 and sys.argv[1] == "--print"
+    if plain:
+        hook = {"cwd": sys.argv[2] if len(sys.argv) > 2 else os.getcwd()}
+    else:
+        try:
+            hook = json.load(sys.stdin)
+        except (json.JSONDecodeError, ValueError):
+            hook = {}
     cwd = os.path.realpath(hook.get("cwd") or os.getcwd())
     if cwd.startswith(WORKTREE_ROOT + os.sep):
         return
@@ -80,12 +88,15 @@ def main():
         body = body[:MAX_CHARS]
     age = f"{age_h * 60:.0f} min" if age_h < 1 else f"{age_h:.1f} h"
     context = (
-        f"COORDINATOR HANDOFF (loaded by the herdr-overseer SessionStart hook; written {age} ago; file: {path}).\n"
+        f"COORDINATOR HANDOFF (loaded by herdr-overseer; written {age} ago; file: {path}).\n"
         "This is the previous coordinator session's state. Treat it as your starting point, but verify live "
         "state (hc ls, git, gh) before acting on it; anything may have changed since it was written.\n"
         + ("[Truncated here; read the file for the rest.]\n" if cut else "")
         + "\n" + body
     )
+    if plain:
+        print(context)
+        return
     print(json.dumps({
         "systemMessage": f"Loaded coordinator handoff ({age} old): {os.path.basename(path)}",
         "hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context},

@@ -17,7 +17,7 @@ import subprocess
 import sys
 import time
 
-STATE = os.path.expanduser("~/.claude/skills/herdr-overseer/state")
+STATE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "state")
 LOG = os.path.join(STATE, "workers.log")
 RELEASABLE = {"done", "idle"}
 

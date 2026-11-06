@@ -26,8 +26,9 @@ def load_config(path):
 
 
 CFG = load_config(os.environ.get("OVERSEER_CONFIG", os.path.join(SKILL, "config", "overseer.env")))
-POLICY_MODEL, POLICY_EFFORT = CFG.get("CLAUDE_MODEL", ""), CFG.get("CLAUDE_EFFORT", "")
 LANE_NAMES = CFG.get("LANES", "").split()
+LANE_MODEL = {l: CFG.get(f"LANE_{l}_MODEL", "") for l in LANE_NAMES}   # policy: model each lane must use
+SHELLS = {"zsh", "bash", "sh", "fish", "python3", "python", "env", None}
 MAX_PER_LANE = int(CFG.get("MAX_PER_LANE", 5))
 # The main checkout to guard (impl workers must not run there; edits there are reported). Optional.
 REPO = os.path.realpath(os.path.expanduser(os.environ["OVERSEER_REPO"])) if os.environ.get("OVERSEER_REPO") else None
@@ -64,7 +65,7 @@ known, info, hits, last_change, cmd_seen, thresh = {}, {}, set(), {}, set(), set
 coord = None
 g0 = sh("git", "-C", REPO, "status", "--porcelain") if REPO else ""
 wl_n = sum(1 for _ in open(WLOG)) if os.path.exists(WLOG) else 0
-last_prof = None
+last_lane_by_pool = {}
 first = True
 
 while True:
@@ -80,12 +81,14 @@ while True:
         if a not in known and not first:
             emit(f"NEW {a} agent={t.get('agent')} where={t.get('where')} cwd={t.get('cwd')} profile={lab.get('overseer.profile','-')} role={lab.get('overseer.role','-')} parent={info[a]['parent']}")
             joined = " ".join(argv)
-            if "claude" in joined and a != coord:
-                if not lab.get("overseer.profile"):
-                    emit(f"POLICY: {a} looks like a Claude worker launched WITHOUT launch-worker.sh (no overseer.profile label) - round-robin/env injection bypassed?")
-                m = re.search(r"--model[ =](\S+)", joined); e = re.search(r"--effort[ =](\S+)", joined)
-                if POLICY_MODEL and lab.get("overseer.profile") and ((m and m.group(1) != POLICY_MODEL) or (e and e.group(1) != POLICY_EFFORT)):
-                    emit(f"POLICY: {a} model/effort deviates: {m and m.group(1)} / {e and e.group(1)}")
+            lane = lab.get("overseer.profile")
+            if t.get("agent") not in SHELLS and a != coord and lab.get("overseer.role") not in ("coordinator", "guard"):
+                if not lane:
+                    emit(f"POLICY: {a} ({t.get('agent')}) looks like an agent started WITHOUT launch-worker.sh (no overseer.profile label) - round-robin/env injection bypassed?")
+                m = re.search(r"(?:--model|-m)[ =](\S+)", joined)
+                want = LANE_MODEL.get(lane or "", "")
+                if want and m and m.group(1) != want:
+                    emit(f"POLICY: {a} on lane {lane} uses model {m.group(1)}, lane policy is {want}")
             if REPO and lab.get("overseer.role") == "impl" and (t.get("cwd") or "").rstrip("/") == REPO:
                 emit(f"POLICY: impl worker {a} runs in the MAIN checkout, not a worktree")
         elif a in known and stat(t) != stat(known[a]) and stat(t) in ("blocked", "error") :
@@ -116,9 +119,9 @@ while True:
                 if k not in cmd_seen:
                     cmd_seen.add(k)
                     if not first: emit(f"COORD CMD: {k}")
-            if re.search(r"ccs env" + ("|--profile (" + "|".join(map(re.escape, LANE_NAMES)) + ")" if LANE_NAMES else ""), scr) and "launch-worker" not in scr:
+            if LANE_NAMES and re.search(r"--profile (" + "|".join(map(re.escape, LANE_NAMES)) + ")", scr) and "launch-worker" not in scr:
                 k = ("manual-env", a)
-                if k not in hits: hits.add(k); emit("POLICY: coordinator handling ccs env / profile by hand instead of launch-worker.sh")
+                if k not in hits: hits.add(k); emit("POLICY: coordinator choosing lanes/profiles by hand instead of launch-worker.sh")
             usage = [(int(m.group(1)), "ctx") for m in re.finditer(r"(\d+)% \d+k/\dM", scr)]
             usage += [(int(m.group(1)), "5h") for m in re.finditer(r"5h (\d+)%", scr)]
             for p, kind in usage:
@@ -134,8 +137,14 @@ while True:
             f = l.split("\t")
             emit("LAUNCH " + " ".join(f[1:6]))
             if len(f) > 3:
-                if last_prof == f[3]: emit(f"ROUND-ROBIN? consecutive launches on {f[3]}")
-                last_prof = f[3]
+                role = f[4] if len(f) > 4 else ""
+                pool = (CFG.get(f"ROUTE_{role}") or CFG.get("ROUTE_DEFAULT") or " ".join(LANE_NAMES)).split()
+                key = " ".join(pool)
+                resumed = l.endswith("\tresumed")
+                # Round-robin check: only when no custom router and the role's pool has several lanes.
+                if not CFG.get("ROUTER_CMD") and len(pool) > 1 and role != "RELEASED" and not resumed:
+                    if last_lane_by_pool.get(key) == f[3]: emit(f"ROUND-ROBIN? consecutive {role} launches on {f[3]} (pool: {key})")
+                    last_lane_by_pool[key] = f[3]
         wl_n = len(lines)
     # per-profile cap
     cnt = {}

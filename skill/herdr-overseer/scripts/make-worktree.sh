@@ -7,9 +7,7 @@
 #      variable name matches WORKTREE_PUBLIC_ENV_RE (config/overseer.env); never secrets.
 #      Every copied file must be gitignored in the worktree, or it is removed again.
 #   4. ~/.herdr/worktrees is kept out of Spotlight (.metadata_never_index)
-#   5. Antigravity (agy) trust: if the main repo is already in agy's trustedWorkspaces, the new
-#      worktree is added too. Entries for deleted worktrees under ~/.herdr/worktrees are pruned.
-#      Untrusted repos are left alone, so agy still asks.
+#   5. optional post-create hooks (WORKTREE_POST_CREATE), e.g. pre-trusting the worktree in an agent CLI
 #
 # Usage: make-worktree.sh --repo /abs/repo --name task-name [--base origin/main]
 set -euo pipefail
@@ -97,37 +95,19 @@ for i in ${placed[@]+"${!placed[@]}"}; do
   echo "make-worktree: WARNING removed $f: not gitignored in $BRANCH (would be committable)" >&2
 done
 
-# 5. agy trust for worktrees of already-trusted repos.
-agy_trust=$(python3 - "$REPO" "$DEST" "$WT_ROOT" <<'PY'
-import json, os, sys, tempfile
-repo, dest, root = (os.path.realpath(a) for a in sys.argv[1:4])
-p = os.path.expanduser("~/.gemini/antigravity-cli/settings.json")
-if not os.path.isfile(p):
-    print("skipped (agy not configured)"); sys.exit()
-d = json.load(open(p))
-tw = d.get("trustedWorkspaces")
-if not isinstance(tw, list):
-    print("skipped (no trustedWorkspaces list)"); sys.exit()
-keep = [w for w in tw if not (isinstance(w, str) and os.path.realpath(w).startswith(root + os.sep) and not os.path.isdir(w))]
-pruned = len(tw) - len(keep)
-trusted = {os.path.realpath(w) for w in keep if isinstance(w, str)}
-if repo not in trusted:
-    msg = "not added (main repo not trusted in agy; agy will ask)"
-elif dest in trusted:
-    msg = "already trusted"
-else:
-    keep.append(dest); msg = "added (main repo is trusted)"
-if keep != tw:
-    d["trustedWorkspaces"] = keep
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(p))
-    with os.fdopen(fd, "w") as f: json.dump(d, f, indent=2); f.write("\n")
-    os.replace(tmp, p)
-print(msg + (f"; pruned {pruned} stale" if pruned else ""))
-PY
-) || agy_trust="error updating agy settings (trust not changed)"
+# 5. Optional post-create hooks (config WORKTREE_POST_CREATE: commands separated by ";"), each called as
+#    <hook> <main repo> <worktree> <worktree root>, e.g. to pre-trust the worktree in an agent CLI.
+#    See examples/hooks/. A failing hook is reported but does not undo the worktree.
+hooks_note=()
+IFS=';' read -r -a HOOKS <<< "${WORKTREE_POST_CREATE:-}"
+for h in ${HOOKS[@]+"${HOOKS[@]}"}; do
+  h="$(echo "$h" | xargs)"; [ -n "$h" ] || continue
+  if out=$(bash -c "$h \"\$@\"" hook "$REPO" "$DEST" "$WT_ROOT" 2>&1); then hooks_note+=("${h##*/}: ${out:-ok}")
+  else hooks_note+=("${h##*/}: FAILED ${out}"); fi
+done
 
 echo "worktree: $DEST"
 echo "branch:   $BRANCH (from $BASE @ $(git -C "$DEST" rev-parse --short HEAD))"
 printf 'deps:     %s\n' "${deps_note[@]:-none}"
 printf 'config:   %s\n' "${copied[@]:-none}"
-echo "agy:      $agy_trust"
+printf 'hooks:    %s\n' "${hooks_note[@]:-none}"
