@@ -1,0 +1,8 @@
+# Gitignored runtime files a worktree of the repo "example-repo" needs to build and run.
+# make-worktree.sh copies them from the main checkout. Rename this file to your repo's folder name,
+# or put the same list in <repo>/.worktreeinclude. One relative path per line; # starts a comment.
+# Each copied file must be gitignored in the worktree, or it is removed again.
+# .env* files are filtered to WORKTREE_PUBLIC_ENV_RE (config/overseer.env).
+.env
+google-services.json
+GoogleService-Info.plist

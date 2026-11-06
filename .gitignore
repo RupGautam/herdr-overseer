@@ -1,0 +1,6 @@
+# local config and run state
+skill/herdr-overseer/config/overseer.env
+skill/herdr-overseer/state/
+__pycache__/
+*.pyc
+.DS_Store
