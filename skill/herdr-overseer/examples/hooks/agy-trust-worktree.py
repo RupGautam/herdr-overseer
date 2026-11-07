@@ -5,7 +5,7 @@ agy's folder trust is per exact path (trustedWorkspaces in ~/.gemini/antigravity
 new worktree would prompt. This adds the worktree only if the main repo is already trusted, and prunes entries
 for deleted worktrees under the worktree root. Untrusted repos are left alone, so agy still asks.
 
-Usage (set in config/overseer.env):  WORKTREE_POST_CREATE="python3 /abs/path/agy-trust-worktree.py"
+Usage (set in config/overseer.env):  WORKTREE_POST_CREATE=("python3 /abs/path/agy-trust-worktree.py")
 Called as: <hook> <main repo> <new worktree> <worktree root>
 """
 import json, os, sys, tempfile

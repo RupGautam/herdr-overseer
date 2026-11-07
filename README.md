@@ -49,8 +49,18 @@ Copy-ready lane definitions for Claude Code, Antigravity, opencode and Codex are
 | `scripts/release-workers.py` | Frees finished workers (on acceptance, or after 30 idle minutes); worktrees and conversations stay resumable |
 | `scripts/handoff-guard.py` + `start-guard.sh` | Asks an idle coordinator for a detailed handoff before its prompt cache expires, and runs the idle sweep |
 | `scripts/load-handoff.py` | Loads the newest handoff into the next coordinator session: a Claude Code hook, or `--print` for other agents |
+| `scripts/probe-lane.sh` | Conformance probe for a lane: task delivery, read-only enforcement, status, resume and its directory scope, cleanup, using real workers |
 | `scripts/watch.py` | Optional watcher for setup health: prompts, rate limits, stalls, routing and policy breaks |
 | `examples/` | Router scripts (least busy, by task keywords) and a worktree hook (agy trust) |
+
+## Tests
+
+`bats tests/` runs the contract suite (68 tests) against a stand-in `hc` (`tests/bin/hc`). It covers
+worker identity, the lane template, routing, worktrees and secrets, release and resume, handoffs, and
+static safety checks. You need [bats-core](https://github.com/bats-core/bats-core) (`brew install bats-core`).
+Real agents are checked by `probe-lane.sh`. Run it inside `eval "$(tests/sandbox.sh)"`, a separate hc
+session and Herdr app home, so live tests never touch your running terminals. [`docs/COLD-START-TEST.md`](docs/COLD-START-TEST.md) describes
+the end-to-end test by a third party.
 
 ## Requirements
 

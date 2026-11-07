@@ -29,10 +29,16 @@ about another agent. Matching lane definitions are in `config/lanes.examples`.
 - **Permission modes:** read-only uses `--mode plan`. `--mode auto` is not available on every account. The
   options are `--mode accept-edits` (asks for shell commands) or `--dangerously-skip-permissions` (asks
   nothing; the worktree is the only boundary).
+- **Plan mode does not refuse writes, it asks** (probe, agy 1.5.2): asked to create a file, a `--mode plan`
+  worker prepares the edit and shows "Allow creation of this file? 1. Yes / 2. No". A read-only agy worker
+  that tries to write therefore stalls on a prompt until someone answers. Brief read-only agy workers not
+  to write files, and answer such a prompt with *No*. **Escape interrupts the whole turn** ("What should
+  Antigravity CLI do instead?"); after Escape, send a message telling it to continue without writing.
 - **Folder trust is per exact path** (`trustedWorkspaces` in `~/.gemini/antigravity-cli/settings.json`).
   A worktree prompts even when its main repo is trusted. `examples/hooks/agy-trust-worktree.py` (a
   `WORKTREE_POST_CREATE` hook) trusts new worktrees of already-trusted repos.
-- **Status:** it reports `idle` right after launch, before its first turn starts. Wait for `working` before
+- **Status:** it has reported `idle` right after launch, before its first turn starts (2026-11-03; not
+  reproduced in the agy 1.5.2 probe, which showed no status, then `working`). Wait for `working` before
   waiting for `done`. It can report `done` while its own background job (a long build or e2e suite) is
   still running, and the 30-minute idle sweep would then kill that job. Brief agy workers to run long
   jobs in the foreground, or label them `overseer.hold=1`.
@@ -51,8 +57,13 @@ about another agent. Matching lane definitions are in `config/lanes.examples`.
 
 - The prompt is positional. Model: `-m`. Approval: `-a never|on-request|…`. Sandbox:
   `-s read-only|workspace-write|danger-full-access`. Extra dirs: `--add-dir DIR`.
+- **Always `--no-daemon`** (hc's own docs): without it, codex runs its tools in its shared background
+  app-server, outside the hc terminal, so hc can't see or stop them. It applies to `resume` too.
 - **Resume is a subcommand:** `codex resume --last [PROMPT]`, which is why lanes have a separate `RESUME_CMD`.
   Verify that `--last` picks the session of the worker's directory before relying on `--resume`.
 - Custom agents and models are defined in `~/.codex/config.toml`. A lane can select one with `-c key=value`
   overrides, or with a separate `CODEX_HOME` in `STATIC_ENV`.
-- Not yet run as an hc worker here: do the probe in SETUP.md step 5 first.
+- **Folder trust prompt** (probe, codex-cli 0.166): in a git worktree, codex asks "Trust this folder? …
+  Trusting will apply to the repository root: <main repo>", even with `[projects."/"] trust_level =
+  "trusted"` in `~/.codex/config.toml`. One approval per main repo; ask the user.
+- Probe results beyond the trust prompt: pending (see SETUP.md step 5).

@@ -21,6 +21,7 @@ CONFIG="${OVERSEER_CONFIG:-$SKILL_DIR/config/overseer.env}"
 
 REPO="" NAME="" BASE="origin/main"
 die() { echo "make-worktree: $*" >&2; exit 2; }
+trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -42,8 +43,17 @@ BRANCH="overseer/$NAME"
 mkdir -p "$WT_ROOT"
 touch "$WT_ROOT/.metadata_never_index"
 
+# Serialize per repo: parallel `git worktree add -b` calls race on .git/config ("could not lock config file").
+LOCK="$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir)/overseer-worktree.lock"
+tries=0
+until mkdir "$LOCK" 2>/dev/null; do
+  tries=$((tries + 1)); [ "$tries" -gt 600 ] && die "worktree lock busy for 60 s: $LOCK (remove it if stale)"
+  sleep 0.1
+done
+trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
 git -C "$REPO" fetch --quiet origin
 git -C "$REPO" worktree add --quiet -b "$BRANCH" "$DEST" "$BASE"
+rmdir "$LOCK" 2>/dev/null || true; trap - EXIT
 
 # 2. Dependencies: clone node_modules from any checkout (main or another worktree) whose
 #    lockfile is identical. That is safe because the same lockfile means the same dependency tree.
@@ -69,7 +79,7 @@ LIST="$REPO/.worktreeinclude"
 copied=() placed=() labels=()
 if [ -f "$LIST" ]; then
   while IFS= read -r rel || [ -n "$rel" ]; do
-    rel="${rel%%#*}"; rel="$(echo "$rel" | xargs)"
+    rel="$(trim "${rel%%#*}")"
     [ -z "$rel" ] && continue
     case "$rel" in /*|*..*) echo "make-worktree: skip $rel (must be a relative path inside the repo)" >&2; continue ;; esac
     [ -f "$REPO/$rel" ] || continue
@@ -95,13 +105,18 @@ for i in ${placed[@]+"${!placed[@]}"}; do
   echo "make-worktree: WARNING removed $f: not gitignored in $BRANCH (would be committable)" >&2
 done
 
-# 5. Optional post-create hooks (config WORKTREE_POST_CREATE: commands separated by ";"), each called as
-#    <hook> <main repo> <worktree> <worktree root>, e.g. to pre-trust the worktree in an agent CLI.
-#    See examples/hooks/. A failing hook is reported but does not undo the worktree.
-hooks_note=()
-IFS=';' read -r -a HOOKS <<< "${WORKTREE_POST_CREATE:-}"
+# 5. Optional post-create hooks: WORKTREE_POST_CREATE is a bash array of commands (a plain string counts as
+#    one command; it is never split). Each runs as <command> <main repo> <worktree> <worktree root>, e.g. to
+#    pre-trust the worktree in an agent CLI. See examples/hooks/. A failing hook is reported but does not
+#    undo the worktree.
+hooks_note=() HOOKS=()
+if [[ "$(declare -p WORKTREE_POST_CREATE 2>/dev/null)" == "declare -a"* ]]; then
+  HOOKS=(${WORKTREE_POST_CREATE[@]+"${WORKTREE_POST_CREATE[@]}"})
+elif [ -n "${WORKTREE_POST_CREATE:-}" ]; then
+  HOOKS=("$WORKTREE_POST_CREATE")
+fi
 for h in ${HOOKS[@]+"${HOOKS[@]}"}; do
-  h="$(echo "$h" | xargs)"; [ -n "$h" ] || continue
+  h="$(trim "$h")"; [ -n "$h" ] || continue
   if out=$(bash -c "$h \"\$@\"" hook "$REPO" "$DEST" "$WT_ROOT" 2>&1); then hooks_note+=("${h##*/}: ${out:-ok}")
   else hooks_note+=("${h##*/}: FAILED ${out}"); fi
 done

@@ -193,11 +193,14 @@ ACCOUNT=$(scalar ACCOUNT); ACCOUNT="${ACCOUNT:-$LANE}"
 HC_ARGS=(run --bg --json --name "$NAME" --cwd "$CWD" --label "overseer.profile=$LANE" --label "agent.account=$ACCOUNT" --label "overseer.role=$ROLE")
 [ -n "$SPACE" ] && HC_ARGS+=(--label "herdr.space=$SPACE")
 # OVERSEER_ROLE=worker tells hooks (e.g. the handoff loader) this session is a worker, not the coordinator.
-CMD=(env OVERSEER_ROLE=worker ${ENV_ARGS[@]+"${ENV_ARGS[@]}"} "${WORKER[@]}")
+# WORKER_ENV_UNSET: variables a worker must not inherit from the session that started herdr-core (e.g. a
+# parent agent's session markers, which can switch off the worker's own transcripts and so break --resume).
+UNSET=(); for v in ${WORKER_ENV_UNSET:-}; do [[ "$v" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] && UNSET+=(-u "$v"); done
+CMD=(env ${UNSET[@]+"${UNSET[@]}"} OVERSEER_ROLE=worker ${ENV_ARGS[@]+"${ENV_ARGS[@]}"} "${WORKER[@]}")
 
 if [ "$DRY_RUN" -eq 1 ]; then
   echo "lane: $LANE (live on it: $count/$MAX_PER_LANE; dry-run does not advance the rotation)"
-  SHOWN=(env OVERSEER_ROLE=worker ${SHOWN_ENV[@]+"${SHOWN_ENV[@]}"} "${WORKER[@]}")
+  SHOWN=(env ${UNSET[@]+"${UNSET[@]}"} OVERSEER_ROLE=worker ${SHOWN_ENV[@]+"${SHOWN_ENV[@]}"} "${WORKER[@]}")
   printf 'hc'; printf ' %q' "${HC_ARGS[@]}" -- "${SHOWN[@]}"; echo
   exit 0
 fi

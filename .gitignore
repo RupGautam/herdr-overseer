@@ -4,3 +4,4 @@ skill/herdr-overseer/state/
 __pycache__/
 *.pyc
 .DS_Store
+local/

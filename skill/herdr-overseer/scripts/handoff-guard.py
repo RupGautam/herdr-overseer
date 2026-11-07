@@ -104,7 +104,7 @@ def coordinators():
         if labels.get("overseer.role") != "coordinator" and not re.search(r"/ coordinator$", where):
             continue
         status = g.get("status") or {}
-        found.append({"addr": g["address"], "cwd": g.get("cwd") or t.get("cwd") or "",
+        found.append({"addr": g["address"], "name": g.get("name"), "cwd": g.get("cwd") or t.get("cwd") or "",
                       "state": status.get("state") if isinstance(status, dict) else status,
                       "since_ms": g.get("status_ms"), "turn": g.get("turn") or t.get("turn") or 0,
                       "where": where})
@@ -184,7 +184,7 @@ def one_pass(idle_min, only=None):
     live = set()
     for c in coordinators():
         live.add(c["addr"])
-        if only is None or only == c["addr"]:
+        if only is None or only in (c["addr"], c["name"]):
             check(c, state, idle_min, now_ms)
     save_state({k: v for k, v in state.items() if k in live})
 
@@ -193,7 +193,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--idle-min", type=float, default=float(os.environ.get("HANDOFF_IDLE_MIN", DEFAULT_IDLE_MIN)))
     ap.add_argument("--once", action="store_true")
-    ap.add_argument("--only", help="testing: act on this coordinator address only")
+    ap.add_argument("--only", help="testing: act on this coordinator (address or name) only")
     a = ap.parse_args()
     os.makedirs(HANDOFF_ROOT, exist_ok=True)
     log(f"armed: idle threshold {a.idle_min} min")

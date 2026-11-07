@@ -47,7 +47,7 @@ or `SKILL.md`, and don't replace components. These parts stay exactly as they ar
 | `MAX_PER_LANE`, `MAX_TOTAL` | Caps on live workers |
 | `COORDINATOR_AGENTS` | hc agent names that may be the coordinator (for the handoff guard) |
 | `WORKTREE_PUBLIC_ENV_RE` | Which `.env` variables may be copied into worktrees (public keys only) |
-| `WORKTREE_POST_CREATE` | Commands run after a worktree is created (e.g. pre-trust it in an agent CLI) |
+| `WORKTREE_POST_CREATE` | Bash array of commands run after a worktree is created (e.g. pre-trust it in an agent CLI) |
 
 Lane template (the final command is `[RESUME_CMD|CMD] + [RO_ARGS|RW_ARGS] + add-dir args + TASK_FLAG + "<task>"`):
 
@@ -138,19 +138,24 @@ Below, `$OVERSEER` is the install dir it printed.
 2. **Routing:** for each role, run `--dry-run --role <role>` without `--lane`, and check that the lane
    is in that role's pool. Dry runs don't advance the rotation. To see rotation, explain it to the
    user, or do step 3 twice.
-3. **Probe each lane once for real:** make a worktree
-   (`make-worktree.sh --repo <repo> --name probe-<l>`), then launch
-   `--lane <L> --read-only --name probe-<l> --cwd <worktree> --task "<question about the repo>. Then print the words OVERSEER, DONE and 1 joined with hyphens."`.
-   Then:
-   - Read the screen (`hc read --lines 0 probe-<l>`).
-   - **Trust or login prompts: stop and ask the user.** Never accept trust yourself.
-   - Wait with `hc wait probe-<l> --output OVERSEER-DONE-1 --timeout 300`.
-   - Check `hc get probe-<l>` shows a sensible status.
-   - Test resume: release it, then `--resume probe-<l> --task "...DONE and 2..."`.
-   - Clean up: `release-workers.py --name probe-<l>`, `git worktree remove`, delete the `overseer/probe-*`
-     branch.
+3. **Probe each lane once for real, in a sandbox.** Run `eval "$(tests/sandbox.sh)"` from the repo clone
+   first. That shell then uses a separate hc session (own terminal server under `/tmp/ovsb`), so the user's
+   running terminals are never touched; agent logins are still the real ones. Optionally run `herdr-app &`
+   in that shell for a second Herdr window with its own config to watch the probes. Finish with
+   `tests/sandbox.sh --stop`.
+   Then run:
+   `"$OVERSEER/scripts/probe-lane.sh" --lane <L> --repo <a git repo with an origin>`.
+   It starts tiny real workers in throwaway worktrees and checks six things:
+   - C1: the task is delivered;
+   - C2: read-only actually prevents a write;
+   - C3: hc reports `working` → `done`;
+   - C4: `--resume` recalls the first turn;
+   - C5: resume picks this directory's session, not a newer one elsewhere;
+   - C6: everything is cleaned up.
    
-   Fix the lane if anything fails, and record what you learned in `AGENT-NOTES.md`.
+   A trust, login or permission prompt stops it as **BLOCKED** and nothing is accepted: ask the user, then
+   re-run. Fix the lane until every check passes, or is SKIP because the lane truly lacks that mode. Record
+   what you learned in `AGENT-NOTES.md`.
 4. **Coordinator:** start a coordinator session in the project. With Claude Code, the handoff hook
    runs and the skill is available. Check that `hc ls` shows the `handoff-guard` terminal.
 

@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""Fake `hc` for tests. Terminals live in $FAKE_HC_DIR/terminals.json; every call is appended to
+$FAKE_HC_DIR/calls.jsonl, and `hc send` texts to $FAKE_HC_DIR/sends.jsonl.
+
+Supports the subset the scripts use: run --bg --json, ls --json [--label k=v], get, label, kill, rm,
+send, read, keys, wait (returns immediately). Tests change status/turn/pid by editing terminals.json
+(see tests/helpers.bash: fake_set).
+"""
+import json, os, sys, time
+
+D = os.environ.get("FAKE_HC_DIR") or sys.exit("FAKE_HC_DIR not set")
+DB = os.path.join(D, "terminals.json")
+
+
+def load():
+    try:
+        return json.load(open(DB))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"next": 1, "terminals": []}
+
+
+def save(db):
+    json.dump(db, open(DB, "w"), indent=1)
+
+
+def find(db, key, live_only=True):
+    for t in db["terminals"]:
+        if (t["address"] == key or t.get("name") == key) and (t["state"] == "live" or not live_only):
+            return t
+    return None
+
+
+def err(kind, msg):
+    print(json.dumps({"error": {"kind": kind, "message": msg}}))
+    sys.exit(1)
+
+
+args = sys.argv[1:]
+with open(os.path.join(D, "calls.jsonl"), "a") as f:
+    f.write(json.dumps(args) + "\n")
+db = load()
+cmd = args[0] if args else ""
+
+if cmd == "run":
+    rest = args[1:]
+    sep = rest.index("--")
+    opts, argv = rest[:sep], rest[sep + 1:]
+    t = {"address": f"f{db['next']}", "name": None, "cwd": None, "labels": {}, "argv": argv, "state": "live",
+         "status": {"state": "idle"}, "status_ms": int(time.time() * 1000), "turn": 0, "pid": None,
+         "agent": os.path.basename(argv[0]) if argv else None}
+    i = 0
+    while i < len(opts):
+        o = opts[i]
+        if o in ("--bg", "--json", "--no-parent", "--keep", "--outlive-parent"):
+            i += 1
+        elif o == "--name":
+            t["name"] = opts[i + 1]; i += 2
+        elif o == "--cwd":
+            t["cwd"] = opts[i + 1]; i += 2
+        elif o == "--label":
+            k, v = opts[i + 1].split("=", 1); t["labels"][k] = v; i += 2
+        else:
+            err("bad_arg", f"fake hc run: unknown option {o}")
+    if t["name"] and find(db, t["name"]):
+        err("conflict", f"name {t['name']} in use")
+    db["next"] += 1
+    db["terminals"].append(t)
+    save(db)
+    print(json.dumps({"address": t["address"], "name": t["name"]}))
+elif cmd == "ls":
+    want = [a.split("=", 1) for a, p in zip(args[1:], args[:-1]) if p == "--label"]
+    out = [t for t in db["terminals"] if t["state"] == "live" or "--all" in args]
+    out = [t for t in out if all(t["labels"].get(k) == v for k, v in want)]
+    print(json.dumps({"terminals": [{"address": t["address"], "name": t.get("name"), "agent": t.get("agent"),
+                                     "cwd": t.get("cwd"), "state": t["state"],
+                                     "status": (t.get("status") or {}).get("state"), "turn": t.get("turn"),
+                                     "where": t["labels"].get("where")} for t in out]}))
+elif cmd == "get":
+    t = find(db, args[1], live_only=False)
+    if not t:
+        err("not_found", f'no terminal "{args[1]}"')
+    print(json.dumps(t))
+elif cmd == "label":
+    t = find(db, args[1]) or err("not_found", args[1])
+    for kv in args[2:]:
+        k, v = kv.split("=", 1); t["labels"][k] = v
+    save(db)
+elif cmd == "kill":
+    t = find(db, args[1]) or err("not_found", args[1])
+    t["state"] = "finished"; save(db)
+elif cmd == "rm":
+    t = find(db, args[1], live_only=False) or err("not_found", args[1])
+    db["terminals"].remove(t); save(db)
+elif cmd == "send":
+    t = find(db, args[1]) or err("not_found", args[1])
+    with open(os.path.join(D, "sends.jsonl"), "a") as f:
+        f.write(json.dumps({"to": t["address"], "text": args[2]}) + "\n")
+elif cmd in ("read", "keys", "wait", "interrupt"):
+    pass
+else:
+    err("bad_cmd", f"fake hc: unsupported command {cmd}")

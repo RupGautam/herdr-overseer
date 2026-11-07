@@ -169,6 +169,8 @@ env  = ENV_CMD output (values never printed) + STATIC_ENV + [RO_ENV | RW_ENV] + 
 - A lane without `RO_ARGS`/`RO_ENV` can't take `--read-only` work; one without `RESUME_CMD` can't be
   resumed; one without `ADD_DIR` can't take `--add-dir` (quote reference content into the brief).
   The launcher says so; route that work to another lane.
+- `scripts/probe-lane.sh --lane L --repo R` checks a lane with real tiny workers: delivery, read-only,
+  status, resume, cleanup. Run it when the user adds or changes a lane, or when a lane misbehaves.
 - Never change a lane's definition yourself. If one is wrong (a flag fails, a prompt blocks every
   worker), tell the user and propose the fix.
 

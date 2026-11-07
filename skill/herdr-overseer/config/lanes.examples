@@ -46,10 +46,11 @@ LANE_OPENCODE_TASK_FLAG=(--prompt)
 LANE_OPENCODE_ACCOUNT="opencode"
 
 # ---- OpenAI Codex CLI (from --help, codex-cli 0.166) ---------------------------------------------
-# Resume is a subcommand. Check that `resume --last` picks the session of the current directory.
+# --no-daemon is required (hc docs): otherwise codex runs its tools in its shared background server,
+# outside the hc terminal. Resume is a subcommand.
 # Uses the model from ~/.codex/config.toml; to pin one, add `-m <model>` to both commands and set MODEL.
-LANE_CODEX_CMD=(codex -a never)
-LANE_CODEX_RESUME_CMD=(codex resume --last -a never)
+LANE_CODEX_CMD=(codex --no-daemon -a never)
+LANE_CODEX_RESUME_CMD=(codex resume --no-daemon --last -a never)
 LANE_CODEX_RO_ARGS=(-s read-only)
 LANE_CODEX_RW_ARGS=(-s workspace-write)
 LANE_CODEX_ADD_DIR="--add-dir"
