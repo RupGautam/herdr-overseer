@@ -161,6 +161,7 @@ case "$OUTCOME" in
   ok) res C1 PASS "answered (states:$SEEN)" ;;
   blocked) res C1 BLOCKED "prompt on screen; not accepted. See blocked-$NAME.txt"; finish ;;
   limit) res C1 LIMIT "the account hit a usage/rate limit (see limit-$NAME.txt); pause the lane and re-probe after the reset"; finish ;;
+  error) res C1 FAIL "agent went to status error (see error-$NAME.txt; states:$SEEN)"; finish ;;
   *) res C1 FAIL "$OUTCOME after ${TIMEOUT}s (states:$SEEN)"; finish ;;
 esac
 if [ "$ro_ok" = 1 ]; then

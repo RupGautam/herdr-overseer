@@ -80,3 +80,12 @@ alive() { hc get "$1" >/dev/null 2>&1; }
   OVERSEER_BUSY_CPU=0.2 run python3 "$R" --name w-agent
   refute alive w-agent
 }
+
+@test "F1b: a released worker's final screen is kept in state/screens" {
+  mk w-done done; fake_set w-done screen '"final answer: 42\nOVERSEER-DONE-1"'
+  run python3 "$R" --idle-min 30
+  refute alive w-done
+  f=$(ls "$SK"/state/screens/w-done-*.txt)
+  grep -q "final answer: 42" "$f"
+  [[ "$output" == *"last screen: $f"* ]] || false
+}

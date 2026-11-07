@@ -95,7 +95,10 @@ elif cmd == "send":
     t = find(db, args[1]) or err("not_found", args[1])
     with open(os.path.join(D, "sends.jsonl"), "a") as f:
         f.write(json.dumps({"to": t["address"], "text": args[2]}) + "\n")
-elif cmd in ("read", "keys", "wait", "interrupt"):
+elif cmd == "read":
+    t = find(db, args[-1], live_only=False) or err("not_found", args[-1])
+    print(t.get("screen", ""))
+elif cmd in ("keys", "wait", "interrupt"):
     pass
 else:
     err("bad_cmd", f"fake hc: unsupported command {cmd}")

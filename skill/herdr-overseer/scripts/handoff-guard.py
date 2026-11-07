@@ -18,6 +18,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -133,14 +134,86 @@ def request_text(path):
     )
 
 
+def run_quiet(args, cwd=None, timeout=20):
+    try:
+        out = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+        return (out.stdout or out.stderr).strip() or "(nothing)"
+    except (OSError, subprocess.TimeoutExpired) as err:
+        return f"(unavailable: {err})"
+
+
+def write_auto_handoff(c, failed_path):
+    """Mechanical handoff (no LLM) for when the coordinator could not write one: live facts only."""
+    cwd = c["cwd"] or os.getcwd()
+    out_dir = os.path.join(HANDOFF_ROOT, project_slug(cwd))
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, time.strftime("%Y-%m-%dT%H-%M-%S") + f"-{c['addr']}-auto.md")
+    workers = []
+    try:
+        for t in json.loads(hc("ls", "--json"))["terminals"]:
+            g = json.loads(hc("get", t["address"]))
+            lab = g.get("labels") or {}
+            if lab.get("overseer.profile"):
+                st = g.get("status") or {}
+                workers.append(f"| {g.get('name') or g['address']} | {g['address']} | {lab.get('overseer.profile')} | "
+                               f"{lab.get('overseer.role', '')} | {st.get('state') if isinstance(st, dict) else st} | {g.get('cwd', '')} |")
+    except (RuntimeError, json.JSONDecodeError) as err:
+        workers.append(f"(hc unavailable: {err})")
+    log_tail = "(no workers.log)"
+    wlog = os.path.join(SKILL, "state", "workers.log")
+    if os.path.exists(wlog):
+        log_tail = "\n".join(l.rstrip("\n")[:220] for l in open(wlog).readlines()[-30:])
+    gh = run_quiet(["gh", "pr", "list", "--limit", "20"], cwd=cwd) if shutil.which("gh") else "(gh not installed)"
+    body = f"""# Coordinator handoff (MECHANICAL): {project_slug(cwd)} — {time.strftime('%Y-%m-%d %H:%M')}
+
+> Written by handoff-guard, not by the coordinator. The coordinator ({c['addr']}, {c['where'] or 'no tab'}) went to
+> status `error` (often a usage limit) before it could write the requested handoff ({failed_path}).
+> This file holds live facts only: no decisions, intent or next steps. Read the newest real handoff (if any) and
+> the coordinator transcript for those, and verify everything below before acting on it.
+
+## Live workers (launched by launch-worker.sh)
+| name | addr | lane | role | status | cwd |
+|---|---|---|---|---|---|
+{chr(10).join(workers) or '(none)'}
+
+## Last 30 lines of state/workers.log
+```
+{log_tail}
+```
+
+## Worktrees
+```
+{run_quiet(["git", "-C", cwd, "worktree", "list"])}
+```
+
+## overseer/* branches
+```
+{run_quiet(["git", "-C", cwd, "branch", "-vv", "--list", "overseer/*"])}
+```
+
+## Open pull requests
+```
+{gh}
+```
+"""
+    with open(path, "w") as f:
+        f.write(body)
+    return path
+
+
 def check(c, state, idle_min, now_ms):
     key = c["addr"]
     rec = state.get(key, {})
     if rec.get("path") and not rec.get("reported") and c["state"] == "error" and not os.path.exists(rec["path"]):
         # e.g. usage limit hit: the cache is cold by the time it resets, so a retry would cost a full re-read.
         rec["reported"] = True
+        try:
+            auto = write_auto_handoff(c, rec["path"])
+            note = f"Wrote a mechanical handoff instead: {auto}"
+        except OSError as err:
+            note = f"Mechanical handoff failed too: {err}"
         log(f"{key} ({c['where']}): handoff request FAILED (status error, often a usage limit); no file at "
-            f"{rec['path']}. Not retrying. The latest memory handoff, if any, still applies.")
+            f"{rec['path']}. Not retrying. {note}")
         return
     if c["state"] not in IDLE_STATES or not c["since_ms"]:
         return

@@ -1,4 +1,4 @@
-# Proposals from real failures (not implemented: each changes behaviour or adds a component)
+# Fixes for real failures
 
 Each of these came from a failure seen in real runs.
 
@@ -27,7 +27,7 @@ still looks idle.
 - A minute later the coordinator's `hc read` on it returned `no terminal`.
 - No work was lost (it was committed), but the coordinator lost the worker's final screen.
 
-**Options:**
+**Implemented: option B** (`release-workers.py` saves `state/screens/<name>-<time>.txt`; test `release.bats` F1b). Options considered:
 - **A.** The launcher sets `overseer.hold=1` when the worker's turn ends, and the coordinator's own
   `release-workers.py --name` removes it. The sweep then only catches workers the coordinator forgot.
   But "forgot" is exactly the case the sweep exists for, so this needs a second, longer threshold
@@ -45,7 +45,7 @@ still looks idle.
 
 Today the guard logs it once and doesn't retry, which is right, because the cache is cold by then.
 
-**Proposal:** on that failure, the guard writes a **mechanical** handoff itself (no LLM) to
+**Implemented** (test `handoff.bats` F2): on that failure, the guard writes a **mechanical** handoff itself (no LLM) to
 `state/handoffs/<Repo>/<ts>-auto.md`. Its header says "mechanical, not written by the coordinator". It
 contains:
 - `hc ls` (workers, lanes, status);
@@ -63,7 +63,7 @@ The loader already picks the newest file. **Adds:** about 60 lines to `handoff-g
 - The coordinator had to learn to wait for `working` first. `SKILL.md` documents it, but it's a manual
   rule the coordinator can forget.
 
-**Proposal:** add `scripts/wait-worker.sh NAME [--marker M] [--timeout S]`, the waiting logic
+**Implemented** (`tests/wait.bats`, 8 tests): `scripts/wait-worker.sh NAME [--marker M] [--after-turn N] [--timeout S]`, the waiting logic
 `probe-lane.sh` already uses:
 - wait until the worker has been `working`, or has printed output after the launch;
 - then wait for `done`/`idle` or the marker;

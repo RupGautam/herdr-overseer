@@ -53,17 +53,21 @@ about another agent. Matching lane definitions are in `config/lanes.examples`.
   agent that delegates to sub-agents.
 - **`--prompt` auto-submits** the task. `-c` continues. There is no `--add-dir`.
 
-## OpenAI Codex CLI (`codex`), flags from `--help` only (codex-cli 0.166)
+## OpenAI Codex CLI (`codex`), probed (codex-cli 0.166: all six probe checks pass)
 
 - The prompt is positional. Model: `-m`. Approval: `-a never|on-request|…`. Sandbox:
   `-s read-only|workspace-write|danger-full-access`. Extra dirs: `--add-dir DIR`.
 - **Always `--no-daemon`** (hc's own docs): without it, codex runs its tools in its shared background
   app-server, outside the hc terminal, so hc can't see or stop them. It applies to `resume` too.
 - **Resume is a subcommand:** `codex resume --last [PROMPT]`, which is why lanes have a separate `RESUME_CMD`.
-  Verify that `--last` picks the session of the worker's directory before relying on `--resume`.
+  `--last` picks the session of the worker's directory (probed).
 - Custom agents and models are defined in `~/.codex/config.toml`. A lane can select one with `-c key=value`
   overrides, or with a separate `CODEX_HOME` in `STATIC_ENV`.
 - **Folder trust prompt** (probe, codex-cli 0.166): in a git worktree, codex asks "Trust this folder? …
   Trusting will apply to the repository root: <main repo>", even with `[projects."/"] trust_level =
   "trusted"` in `~/.codex/config.toml`. One approval per main repo; ask the user.
-- Probe results beyond the trust prompt: pending (see SETUP.md step 5).
+- **Model availability depends on the login:** with a ChatGPT account, a model the account can't use
+  (here the `config.toml` default) fails the first turn with "The '<model>' model is not supported when
+  using Codex with a ChatGPT account". Pin a model from `codex debug models` in the lane (`-m <model>`).
+- **Probe results:** read-only (`-s read-only`) refuses the write without a prompt. `resume --last` picks
+  the session of the current directory, even when another directory has a newer session (C5).

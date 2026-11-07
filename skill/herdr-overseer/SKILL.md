@@ -281,23 +281,32 @@ Re-read the screen after each key until the agent is working on the task.
 
 ## 5. Wait
 
-**Primary signal: hc status** (for agents hc recognises; install Herdr's integration for the agent if
-available). hc reports `status.state` (`working`, `done`, `idle`, `blocked`, `error`), plus a one-line
-`msg`, and wakes the coordinator when a child stops or blocks. When the coordinator runs in a Herdr
-tab, workers are its children, so prefer:
+Wait with `wait-worker.sh`, right after `launch-worker.sh` or `hc send`:
 
 ```sh
-hc wait --children any              # next worker news; re-wait on reason:"timeout"
-hc get NAME                         # status.state + status.msg
+"$OVERSEER/scripts/wait-worker.sh" NAME --marker OVERSEER-DONE-1 --timeout 900   # after hc send: also --after-turn N
 ```
 
-`blocked` means a prompt is waiting (permission, trust): read the screen and handle it per
-section 4. Some agents report `idle`/`done` at odd moments (before the first turn, or while their own
-background job still runs); `AGENT-NOTES.md` lists the known cases. Wait until `hc get` shows `working`
-before waiting for `done`, and label a worker `overseer.hold=1` while it runs a long job.
+It waits for the turn to **start** (status `working`, a higher turn, or the marker), then to **end**: status
+`done`/`idle`, or the marker. That covers agents that report `idle` before their first turn, which make a bare
+`hc wait` return at once. It never presses a key. The output is one line plus an exit code:
+- `0 done`
+- `0 done-no-marker`: it finished without the marker; screen saved
+- `2 blocked`: a prompt is waiting; handle it per section 4, screen saved
+- `3 limit`: pause the lane and tell the user
+- `4 error`
+- `5 gone`
+- `6 timeout`: check `hc read` before waiting again
 
-**Fallback: the output marker**, for agents without status or when you need to know that a specific
-turn finished:
+A turn that ended before the wait began is only caught by `--marker` or `--after-turn N` (the worker's
+`turn` from `hc get` before you sent; 0 right after launch), so always pass one. When the coordinator runs in a
+Herdr tab, `hc wait --children any` still tells you *which* worker has news; confirm with `wait-worker.sh`.
+
+Some agents report `done` while their own background job still runs. The idle sweep won't release a worker
+whose background processes are busy, but label a worker `overseer.hold=1` while it runs a long job anyway.
+
+**The output marker**, which every brief asks for (it's how `wait-worker.sh --marker` knows that a specific
+turn finished):
 
 ```sh
 hc wait NAME --output "OVERSEER-DONE-1" --timeout 600   # reason:"output" = done
@@ -326,8 +335,9 @@ that file. Read-only workers (`--read-only`) must answer on screen.
 ## 7. Follow-up turns
 
 ```sh
+T=$(hc get NAME | python3 -c 'import json,sys;print(json.load(sys.stdin).get("turn") or 0)')
 hc send NAME "Next task … final line: the words OVERSEER, DONE and 2 joined with hyphens." >/dev/null
-hc wait NAME --output "OVERSEER-DONE-2" --timeout 600
+"$OVERSEER/scripts/wait-worker.sh" NAME --marker OVERSEER-DONE-2 --after-turn "$T" --timeout 900
 ```
 
 `hc interrupt NAME` stops a turn without killing the worker.
@@ -348,7 +358,9 @@ hc label w-login overseer.hold=1   # keep a done worker out of the sweep while a
 ```
 
 - Only launcher-labelled workers are touched. `working`/`blocked` workers are never released.
-- Each release is logged in `state/workers.log` (`RELEASED`).
+- Each release is logged in `state/workers.log` (`RELEASED`). The worker's final screen is saved to
+  `state/screens/<name>-<time>.txt`: read it when `hc read` says the worker is gone. A worker whose background
+  processes are busy (a build or test run it started) is kept; `--name … --force` overrides that.
 - **Reopen with context:** `launch-worker.sh --resume w-login --task "FOLLOW-UP" --space SP`.
   It uses the same lane, worktree, role and read-only setting (from the log), and continues the
   worker's last conversation in that worktree (the lane's `RESUME_CMD`). It doesn't use a routing
@@ -373,6 +385,10 @@ only after real work has happened.
 at the path given. Reply with only `HANDOFF WRITTEN <path>`. You can also write one yourself
 whenever the user is leaving or before a risky step. Put it under
 `state/handoffs/<Repo>/<YYYY-MM-DDTHH-MM-SS>-manual.md`.
+
+If the request is lost (the coordinator goes to `error`, usually a usage limit, before writing), the guard
+writes a **mechanical** handoff itself (`…-auto.md`): live workers, the recent launch log, worktrees, branches
+and open PRs, with no decisions or intent. Treat it as facts to verify, and recover intent from the transcript.
 
 **Loading:** `scripts/load-handoff.py` picks the newest handoff for the project (from
 `state/handoffs/<Repo>/`, or Claude Code auto-memory `handoff*.md` notes) if it is less than 7 days old,

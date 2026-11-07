@@ -46,8 +46,9 @@ Copy-ready lane definitions for Claude Code, Antigravity, opencode and Codex are
 | `SKILL.md` | The coordinator's playbook: briefs, routing by role, waiting, review rules, release, handoffs, and what to show the user |
 | `scripts/launch-worker.sh` | Starts a worker from a lane template on the routed lane, with caps, labels, logging and resume |
 | `scripts/make-worktree.sh` | One worktree per task: fresh branch from `origin/main`, cloned `node_modules`, gitignored runtime files (secrets filtered), post-create hooks |
-| `scripts/release-workers.py` | Frees finished workers (on acceptance, or after 30 idle minutes); worktrees and conversations stay resumable |
-| `scripts/handoff-guard.py` + `start-guard.sh` | Asks an idle coordinator for a detailed handoff before its prompt cache expires, and runs the idle sweep |
+| `scripts/wait-worker.sh` | Waits for a worker's turn to start and then end, for any agent; stops on prompts, limits and errors without pressing keys |
+| `scripts/release-workers.py` | Frees finished workers (on acceptance, or after 30 idle minutes), keeping each one's final screen and never touching a busy background job; worktrees and conversations stay resumable |
+| `scripts/handoff-guard.py` + `start-guard.sh` | Asks an idle coordinator for a detailed handoff before its prompt cache expires, writes a mechanical one if that request is lost, and runs the idle sweep |
 | `scripts/load-handoff.py` | Loads the newest handoff into the next coordinator session: a Claude Code hook, or `--print` for other agents |
 | `scripts/probe-lane.sh` | Conformance probe for a lane: task delivery, read-only enforcement, status, resume and its directory scope, cleanup, using real workers |
 | `scripts/watch.py` | Optional watcher for setup health: prompts, rate limits, stalls, routing and policy breaks |
@@ -55,7 +56,7 @@ Copy-ready lane definitions for Claude Code, Antigravity, opencode and Codex are
 
 ## Tests
 
-`bats tests/` runs the contract suite (68 tests) against a stand-in `hc` (`tests/bin/hc`). It covers
+`bats tests/` runs the contract suite (78 tests) against a stand-in `hc` (`tests/bin/hc`). It covers
 worker identity, the lane template, routing, worktrees and secrets, release and resume, handoffs, and
 static safety checks. You need [bats-core](https://github.com/bats-core/bats-core) (`brew install bats-core`).
 Real agents are checked by `probe-lane.sh`. Run it inside `eval "$(tests/sandbox.sh)"`, a separate hc

@@ -69,6 +69,21 @@ sends() { [ -f "$FAKE_HC_DIR/sends.jsonl" ] && wc -l < "$FAKE_HC_DIR/sends.jsonl
   [ "$(sends)" = "1" ]
 }
 
+@test "F2: when the request is lost, the guard writes a mechanical handoff that the loader then serves" {
+  coordinator c1 claude-code
+  launch --lane A --name w-busy --task "some task" >/dev/null 2>&1
+  python3 "$G" --once --only c1 >/dev/null
+  fake_set c1 status '{"state":"error"}'
+  run python3 "$G" --once --only c1
+  [[ "$output" == *"Wrote a mechanical handoff instead"* ]] || false
+  f=$(ls "$SK"/state/handoffs/Proj/*-auto.md)
+  grep -q "MECHANICAL" "$f"
+  grep -q "| w-busy | f2 | A | impl |" "$f"
+  grep -q "some task" "$f"
+  run python3 "$LH" --print "$PROJ"
+  [[ "$output" == *"MECHANICAL"* ]] || false
+}
+
 @test "inv7: loader prints the newest handoff (state dir or memory), skips workers, worktrees, stale files" {
   mkdir -p "$SK/state/handoffs/Proj"
   echo "# older" > "$SK/state/handoffs/Proj/a.md"; touch -t 202601010000 "$SK/state/handoffs/Proj/a.md"

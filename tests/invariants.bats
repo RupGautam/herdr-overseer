@@ -24,7 +24,7 @@ S="$REPO_ROOT/skill/herdr-overseer"
 
 @test "agnostic: launcher, worktree and release scripts name no agent CLI" {
   [ -z "$(grep -niE '\b(claude|codex|agy|antigravity|opencode|gemini|ccs)\b' \
-    "$S/scripts/launch-worker.sh" "$S/scripts/make-worktree.sh" "$S/scripts/release-workers.py" "$S/scripts/probe-lane.sh")" ]
+    "$S/scripts/launch-worker.sh" "$S/scripts/make-worktree.sh" "$S/scripts/release-workers.py" "$S/scripts/probe-lane.sh" "$S/scripts/wait-worker.sh")" ]
 }
 
 @test "agnostic: every lane in lanes.examples sources and has a CMD array" {

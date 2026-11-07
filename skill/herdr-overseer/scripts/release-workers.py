@@ -11,7 +11,8 @@ some agents report done/idle while a job they started (a build, a test suite) is
 releasing them would kill it. Busy = the worker's descendant processes (not the agent process itself)
 used >= BUSY_CPU (default 20%) of a core over a SAMPLE_S (2 s) window. --force skips that check for --name. A worker labelled overseer.hold=1 is skipped by the idle sweep
 (set with `hc label NAME overseer.hold=1` while a follow-up is planned). Releases are appended to
-state/workers.log. Reopen a released worker with: launch-worker.sh --resume NAME --task "..."
+state/workers.log, and each released worker's last screen is kept in state/screens/<name>-<time>.txt.
+Reopen a released worker with: launch-worker.sh --resume NAME --task "..."
 """
 import argparse
 import json
@@ -22,6 +23,7 @@ import time
 
 STATE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "state")
 LOG = os.path.join(STATE, "workers.log")
+SCREENS = os.path.join(STATE, "screens")
 RELEASABLE = {"done", "idle"}
 BUSY_CPU = float(os.environ.get("OVERSEER_BUSY_CPU", 0.2))      # fraction of one core
 SAMPLE_S = float(os.environ.get("OVERSEER_BUSY_SAMPLE_S", 2))
@@ -113,14 +115,30 @@ def workers():
     return found
 
 
+def save_screen(w):
+    """Keep the worker's last screen: after release `hc read` has nothing, and the coordinator may still
+    want the final output (state/screens/<name>-<time>.txt)."""
+    try:
+        text = hc("read", "--lines", "0", w["addr"])
+    except RuntimeError:
+        return None
+    os.makedirs(SCREENS, exist_ok=True)
+    path = os.path.join(SCREENS, f"{w['name']}-{time.strftime('%Y-%m-%dT%H-%M-%S')}.txt")
+    with open(path, "w") as f:
+        f.write(text)
+    return path
+
+
 def release(w, reason, dry):
     verb = "would release" if dry else "released"
     if not dry:
+        shot = save_screen(w)
         hc("kill", w["addr"])
         hc("rm", w["addr"])
         with open(LOG, "a") as f:
             f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')}\t{w['addr']}\t{w['name']}\t{w['lane']}\tRELEASED\t{w['cwd']}\t{reason}\n")
-    print(f"{verb} {w['name']} ({w['addr']}, {w['lane']}): {reason}")
+    print(f"{verb} {w['name']} ({w['addr']}, {w['lane']}): {reason}"
+          + (f"; last screen: {shot}" if not dry and shot else ""))
 
 
 def main():
