@@ -28,7 +28,7 @@ S="$REPO_ROOT/skill/herdr-overseer"
 }
 
 @test "agnostic: every lane in lanes.examples sources and has a CMD array" {
-  run bash -c "source '$S/config/lanes.examples'; for v in \$(compgen -A variable | grep -E '^LANE_[A-Z0-9_]+_CMD\$'); do [[ \"\$(declare -p \$v)\" == 'declare -a'* ]] || { echo \"not array: \$v\"; exit 1; }; done; compgen -A variable | grep -cE '^LANE_[A-Z0-9_]+_CMD\$'"
+  run bash -c "source '$S/config/lanes.examples'; for v in \$(compgen -A variable | grep -E '^LANE_[A-Z0-9_]+_CMD\$' | grep -v '_ENV_CMD\$'); do [[ \"\$(declare -p \$v)\" == 'declare -a'* ]] || { echo \"not array: \$v\"; exit 1; }; done; compgen -A variable | grep -E '^LANE_[A-Z0-9_]+_CMD\$' | grep -vc '_ENV_CMD\$'"
   [ "$status" -eq 0 ]
   [ "$output" -ge 4 ]
 }

@@ -57,6 +57,31 @@ LANE_CODEX_RW_ARGS=(-s workspace-write)
 LANE_CODEX_ADD_DIR="--add-dir"
 LANE_CODEX_ACCOUNT="codex"
 
+# ---- Claude Code on DeepSeek's Anthropic-compatible API (used in practice, claude 2.1.319: probe passes C1-C6)
+# Base URL + token from an account switcher (here a ccs API profile: `ccs api create deepseek --preset deepseek`)
+# or STATIC_ENV for the URL with the token from ENV_CMD; never put the token in STATIC_ENV. The model and Claude
+# Code settings follow DeepSeek's docs. CLAUDE_CODE_INLINE_TOOLS=false is required: see AGENT-NOTES.md.
+# Recommended: give the lane its own Claude config dir so sessions, history and plugins stay separate. Add
+# "CLAUDE_CONFIG_DIR=$HOME/.claude-deepseek" to STATIC_ENV, and open claude once with that env in the repo to
+# finish its first-run screens (theme, folder trust). Until then new workers stop on the theme picker.
+LANE_DSK_CMD=(claude --model "deepseek-flash[1m]")
+LANE_DSK_RESUME_CMD=(claude --model "deepseek-flash[1m]" --continue)
+LANE_DSK_RO_ARGS=(--disallowedTools=Edit,Write,NotebookEdit,Bash)
+LANE_DSK_ADD_DIR="--add-dir="
+LANE_DSK_ENV_CMD="ccs env deepseek --format raw --shell bash"
+LANE_DSK_STATIC_ENV=(
+  "ANTHROPIC_MODEL=deepseek-flash[1m]"
+  "ANTHROPIC_DEFAULT_OPUS_MODEL=deepseek-flash[1m]"
+  "ANTHROPIC_DEFAULT_SONNET_MODEL=deepseek-flash[1m]"
+  ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-flash
+  CLAUDE_CODE_SUBAGENT_MODEL=deepseek-flash
+  CLAUDE_CODE_EFFORT_LEVEL=max
+  CLAUDE_CODE_AUTO_COMPACT_WINDOW=786432
+  CLAUDE_CODE_INLINE_TOOLS=false
+)
+LANE_DSK_ACCOUNT="deepseek"
+LANE_DSK_MODEL="deepseek-flash[1m]"
+
 # ---- Any other CLI agent -------------------------------------------------------------------------
 # Requirements: it runs interactively in a terminal (so hc can show it and send follow-ups), starts
 # in the current directory, accepts a first task on the command line, and ideally can continue its

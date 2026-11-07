@@ -23,6 +23,19 @@ about another agent. Matching lane definitions are in `config/lanes.examples`.
   its SessionStart hook. Its subscription prompt cache lasts 1 hour, which is what the 50-minute guard
   threshold is for.
 
+## Claude Code on another provider's Anthropic-compatible API (DeepSeek), used in practice
+
+- Set `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` (from an account switcher via `ENV_CMD`, so the token is
+  never printed), plus the provider's model names. A `--model` for a Claude model would be sent to the provider
+  and fail, so pin the provider's model instead.
+- **`CLAUDE_CODE_INLINE_TOOLS=false` is required for DeepSeek** (probe, claude 2.1.319). Interactive sessions
+  send deferred tools as inline `tool_definition` content blocks. DeepSeek's API answers with
+  `422 … unknown variant tool_definition, expected tool_reference`, a generic error that Claude Code's own
+  inline-tools fallback doesn't recognise, so every turn fails. `ENABLE_TOOL_SEARCH=false` does not help.
+  `claude -p` runs may not show the problem, so probe interactively (probe-lane.sh).
+- These workers use whichever Claude config dir the env points to (the main `~/.claude` if none is set):
+  plugins, hooks and MCP servers come along. The claude.ai connectors are disabled while an API token is set.
+
 ## Antigravity CLI (`agy`), used in practice
 
 - `agy --model M -i "TASK"` starts interactive with a first task. `-c` continues the last session.
