@@ -112,9 +112,10 @@ wait_turn() {
   screen "$name" > "$OUT/timeout-$name.txt"
 }
 
-new_wt() {  # new_wt NAME -> path
-  local r; r=$("$S/make-worktree.sh" --repo "$REPO" --name "$1" 2>&1) || { echo "make-worktree failed: $r" >&2; return 1; }
-  WTS+=("$1"); printf '%s' "$r" | sed -n 's/^worktree: //p'
+new_wt() {  # new_wt NAME: sets WT_PATH. Not called in $(...): it must record WTS in this shell for cleanup.
+  local r; WTS+=("$1")
+  r=$("$S/make-worktree.sh" --repo "$REPO" --name "$1" 2>&1) || { echo "make-worktree failed: $r" >&2; return 1; }
+  WT_PATH=$(printf '%s' "$r" | sed -n 's/^worktree: //p')
 }
 launch() { "$S/launch-worker.sh" "$@" >/dev/null 2>"$OUT/launch.err"; }
 release() { python3 "$S/release-workers.py" --name "$1" >>"$OUT/release.log" 2>&1; ! hc get "$1" >/dev/null 2>&1 || { hc kill "$1" >/dev/null 2>&1; hc rm "$1" >/dev/null 2>&1; return 1; }; }
@@ -132,8 +133,13 @@ finish() {
   local left=0 repo_name; repo_name=$(basename "$(cd "$REPO" && pwd)")
   cleanup
   if [ "$KEEP" = 0 ]; then
-    for n in ${NAMES[@]+"${NAMES[@]}"}; do hc get "$n" >/dev/null 2>&1 && left=1; done
-    for w in ${WTS[@]+"${WTS[@]}"}; do [ -e "$HOME/.herdr/worktrees/$repo_name/$w" ] && left=1; git -C "$REPO" rev-parse -q --verify "overseer/$w" >/dev/null && left=1; done
+    # Verify independently of the bookkeeping: everything this run could have created is named after N.
+    for n in "$NAME" "$DNAME"; do
+      hc get "$n" 2>/dev/null | grep -q '"state": *"live"' && left=1
+      [ -e "$HOME/.herdr/worktrees/$repo_name/$n" ] && left=1
+      git -C "$REPO" worktree list --porcelain | grep -qx "worktree .*/$n" && left=1
+      git -C "$REPO" rev-parse -q --verify "refs/heads/overseer/$n" >/dev/null && left=1
+    done
     [ "$left" = 0 ] && res C6 PASS "workers, worktrees and branches removed" || res C6 FAIL "leftovers (see hc ls / git worktree list)"
   else res C6 SKIP "--keep"; fi
   echo "lane $LANE  (code word $WORD; screens in ${OUT/#$HOME/~})"
@@ -144,7 +150,8 @@ finish() {
 trap 'res ABORT FAIL "interrupted"; finish' INT TERM
 
 # ---- turn 1: delivery, read-only, status ----------------------------------------------------------
-WT=$(new_wt "$NAME") || { res C1 FAIL "could not create worktree"; finish; }
+new_wt "$NAME" || { res C1 FAIL "could not create worktree"; finish; }
+WT="$WT_PATH"
 FILE="probe-write-$N.txt"
 TASK1="Automated conformance probe; this is not real work. Do not use subagents or start other agents. \
 (1) Remember this code word for later: $WORD. \
@@ -178,7 +185,7 @@ fi
 
 # ---- decoy session (same lane, other directory) for the resume-scope check -----------------------
 if [ "$resume_ok" = 1 ] && [ "$SCOPE" = 1 ]; then
-  DWT=$(new_wt "$DNAME") && NAMES+=("$DNAME") && \
+  new_wt "$DNAME" && DWT="$WT_PATH" && NAMES+=("$DNAME") && \
   launch --lane "$LANE" --name "$DNAME" --cwd "$DWT" --role "$ROLE" ${RO_FLAG[@]+"${RO_FLAG[@]}"} \
     --task "Automated probe decoy. Remember this code word: $DECOY. Then print, on its own line, the words PROBE, DECOY and $N joined with hyphens." \
   && wait_turn "$DNAME" "PROBE-DECOY-$N"

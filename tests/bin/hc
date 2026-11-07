@@ -97,7 +97,19 @@ elif cmd == "send":
         f.write(json.dumps({"to": t["address"], "text": args[2]}) + "\n")
 elif cmd == "read":
     t = find(db, args[-1], live_only=False) or err("not_found", args[-1])
-    print(t.get("screen", ""))
+    screen = t.get("screen", "")
+    if os.environ.get("FAKE_HC_ECHO_AGENT") == "1":
+        # Stand-in agent: answer "print the words X, Y and N joined with hyphens" requests in its tasks.
+        import re
+        texts = list(t.get("argv") or [])
+        try:
+            texts += [json.loads(l)["text"] for l in open(os.path.join(D, "sends.jsonl")) if json.loads(l)["to"] == t["address"]]
+        except FileNotFoundError:
+            pass
+        for txt in texts:
+            for a1, a2, n in re.findall(r"the words (\w+), (\w+) and (\d+) joined with hyphens", txt):
+                screen += f"\n{a1}-{a2}-{n}"
+    print(screen)
 elif cmd in ("keys", "wait", "interrupt"):
     pass
 else:

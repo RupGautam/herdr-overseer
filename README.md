@@ -56,7 +56,7 @@ Copy-ready lane definitions for Claude Code, Antigravity, opencode and Codex are
 
 ## Tests
 
-`bats tests/` runs the contract suite (78 tests) against a stand-in `hc` (`tests/bin/hc`). It covers
+`bats tests/` runs the contract suite (81 tests) against a stand-in `hc` (`tests/bin/hc`). It covers
 worker identity, the lane template, routing, worktrees and secrets, release and resume, handoffs, and
 static safety checks. You need [bats-core](https://github.com/bats-core/bats-core) (`brew install bats-core`).
 Real agents are checked by `probe-lane.sh`. Run it inside `eval "$(tests/sandbox.sh)"`, a separate hc
